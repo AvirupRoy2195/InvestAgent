@@ -125,12 +125,12 @@ def initialize_system(api_key: str):
 
 def render_decision_badge(decision: str):
     """Render colored badge for decision"""
-    if decision == "BUY":
-        st.markdown('<div class="decision-buy">🟢 BUY</div>', unsafe_allow_html=True)
-    elif decision == "SELL":
-        st.markdown('<div class="decision-sell">🔴 SELL</div>', unsafe_allow_html=True)
+    if decision in ["BUY", "INVEST"]:
+        st.markdown(f'<div class="decision-buy">🟢 {decision}</div>', unsafe_allow_html=True)
+    elif decision in ["SELL", "NOT_TO_INVEST"]:
+        st.markdown(f'<div class="decision-sell">🔴 {decision}</div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="decision-hold">🟡 HOLD</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="decision-hold">🟡 {decision}</div>', unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -223,7 +223,7 @@ with tab1:
         with col5:
             st.markdown("**5. Media**\n\n📰 Critique")
         with st.columns(1)[0]:
-            st.markdown("**6. Super Agent**\n\n🏆 Final Validator")
+            st.markdown("**6. King Agent**\n\n👑 Royal Validator")
             
     # Run button
     run_disabled = not st.session_state.documents_loaded
@@ -242,10 +242,9 @@ with tab1:
                     "Opening": phases[1].empty(),
                     "Cross-Exam": phases[2].empty(),
                     "Closing": phases[3].empty(),
-                    "Closing": phases[3].empty(),
                     "Jury": phases[4].empty(),
                     "Judge": phases[5].empty(),
-                    "Super": st.empty()
+                    "King": st.empty()
                 }
                 for name, ph in phase_status.items():
                     ph.markdown(f"⏳ {name}")
@@ -275,7 +274,7 @@ with tab1:
                     # Quick preview
                     final = result.get("final_verdict", {})
                     if final and not final.get("error"):
-                        st.markdown("### 🏆 Official Verdict")
+                        st.markdown("### 👑 Royal Verdict")
                         render_decision_badge(final.get("OFFICIAL_VERDICT", "HOLD"))
                         st.caption(f"Status: {final.get('VALIDATION_STATUS', 'PENDING')}")
                         
@@ -381,11 +380,11 @@ with tab2:
             
         st.divider()
         
-        # SUPER AGENT
-        st.markdown("### 🏆 Super Agent (Official Verdict)")
+        # KING AGENT
+        st.markdown("### 👑 King Agent (Royal Verdict)")
         final = result.get("final_verdict", {})
         if final and not final.get("error"):
-            st.markdown(f'<div class="phase-card" style="border-left: 4px solid #gold; background: #fffbe6;">', unsafe_allow_html=True)
+            st.markdown(f'<div class="phase-card" style="border-left: 4px solid gold; background: #fffbe6;">', unsafe_allow_html=True)
             render_decision_badge(final.get("OFFICIAL_VERDICT", "HOLD"))
             st.markdown(f"**Validation Status:** {final.get('VALIDATION_STATUS', 'N/A')}")
             st.markdown(f"**Confidence:** {final.get('FINAL_CONFIDENCE', 'N/A')}")

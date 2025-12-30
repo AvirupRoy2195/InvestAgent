@@ -35,6 +35,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
 
@@ -95,8 +96,8 @@ class Config:
 # Using 10 FREE models: 2 new (devstral, deepseek-v3.1) + 8 previous
 AGENT_MODEL_MAPPING = {
     # Orchestration Layer
-    "query_understanding": "moonshotai/kimi-k2:free",
-    "planner": "moonshotai/kimi-k2:free",
+    "query_understanding": "allenai/olmo-3-32b-think:free", # Good instruction following
+    "planner": "nex-agi/deepseek-v3.1-nex-n1:free",        # Strong reasoning for planning
     
     # Courtroom Agents
     "pro_agent": "moonshotai/kimi-k2:free",
@@ -112,8 +113,8 @@ AGENT_MODEL_MAPPING = {
     # Media/Critique
     "critique_agent": "z-ai/glm-4.5-air:free",
     
-    # Super Agent (Final Validator) - Devstral 2512
-    "super_agent": "mistralai/devstral-2512:free",
+    # King Agent (Final Validator) - Devstral 2512
+    "king_agent": "mistralai/devstral-2512:free",
 }
 
 # All available FREE models (10 total)
@@ -529,7 +530,7 @@ Weigh all evidence and render your FINAL VERDICT:
 
 Return JSON:
 {{
-    "DECISION": "BUY|SELL|HOLD",
+    "DECISION": "INVEST|NOT_TO_INVEST",
     "CONFIDENCE": 0.0-1.0,
     "REASONING": "3-5 paragraph detailed reasoning",
     "KEY_CONSIDERATIONS": ["Top 5 factors"],
@@ -550,6 +551,9 @@ FULL TRIAL SUMMARY:
 - Against case strength: {against_summary}
 - Jury consensus: {jury_summary}
 
+WEB SEARCH NEWS (LATEST):
+{web_context}
+
 Provide your media critique:
 
 Return JSON:
@@ -563,8 +567,8 @@ Return JSON:
     "recommendation": "ACCEPT|REVISE|REJECT"
 }}"""
 
-SUPER_AGENT_PROMPT = """You are the SUPER AGENT (FINAL VALIDATOR).
-Your role is to review the entire case, validate the process, and publish the OFFICIAL VERDICT.
+KING_AGENT_PROMPT = """You are the KING AGENT (ROYAL VALIDATOR).
+Your role is to review the entire case, validate the process, and publish the ROYAL VERDICT.
 
 FULL CASE HISTORY:
 1. QUERY: {query}
@@ -576,7 +580,7 @@ Make the final authoritative decision.
 
 Return JSON:
 {{
-    "OFFICIAL_VERDICT": "BUY|SELL|HOLD",
+    "OFFICIAL_VERDICT": "INVEST|NOT_TO_INVEST",
     "VALIDATION_STATUS": "VALIDATED|CORRECTED",
     "FINAL_CONFIDENCE": 0.0-1.0,
     "EXECUTIVE_SUMMARY": "Concise 1-paragraph summary for the user",
@@ -592,9 +596,11 @@ Return JSON:
 class InvestmentAgentSystem:
     """12-Agent Investment Analysis System with Courtroom Debate"""
     
+    
     def __init__(self, config: Config = None):
         self.config = config or Config()
         self.rag = AgenticRAGSystem(self.config)
+        self.search = DuckDuckGoSearchRun()
         self.agent_llms = self._create_agent_llms()
         self.graph = self._build_graph()
         logger.info("✅ Investment Agent System initialized (12 agents)")
@@ -869,14 +875,24 @@ class InvestmentAgentSystem:
     # ========== CRITIQUE NODE (MEDIA) ==========
     
     def _critique_agent(self, state: GraphState) -> GraphState:
-        """Critique agent (Media) provides external accountability"""
+        """Critique agent (Media) provides external accountability with Web Search"""
         state["current_phase"] = "critique"
+        
+        # 1. Perform Web Search for latest news/controversies
+        web_context = "No search results available."
+        try:
+            search_query = f"{state['company_name']} {state['ticker']} financial controversy news risks"
+            web_context = self.search.invoke(search_query)
+            logger.info(f"🌐 Critique Agent searched: {search_query}")
+        except Exception as e:
+            logger.warning(f"⚠️ Web search failed: {e}")
         
         prompt = CRITIQUE_PROMPT.format(
             judge_verdict=json.dumps(state["judge_verdict"], indent=2),
             pro_summary=json.dumps(state.get("pro_closing", {})),
             against_summary=json.dumps(state.get("against_closing", {})),
-            jury_summary=json.dumps(state["jury_deliberations"])
+            jury_summary=json.dumps(state["jury_deliberations"]),
+            web_context=web_context
         )
         try:
             response = self._get_llm("critique_agent").invoke([HumanMessage(content=prompt)])
@@ -895,24 +911,24 @@ class InvestmentAgentSystem:
         
         return state
 
-    # ========== SUPER AGENT NODE ==========
+    # ========== KING AGENT NODE ==========
     
-    def _super_agent(self, state: GraphState) -> GraphState:
-        """Super Agent validates everything and publishes final verdict"""
-        state["current_phase"] = "super_agent"
+    def _king_agent(self, state: GraphState) -> GraphState:
+        """King Agent validates everything and publishes final verdict"""
+        state["current_phase"] = "king_agent"
         
-        prompt = SUPER_AGENT_PROMPT.format(
+        prompt = KING_AGENT_PROMPT.format(
             query=state["query"],
             judge_verdict=json.dumps(state["judge_verdict"], indent=2),
             critique_report=json.dumps(state["critique_report"], indent=2)
         )
         try:
-            response = self._get_llm("super_agent").invoke([HumanMessage(content=prompt)])
+            response = self._get_llm("king_agent").invoke([HumanMessage(content=prompt)])
             state["final_verdict"] = self._parse_response(response.content)
-            logger.info("🏆 Super Agent published final verdict")
+            logger.info("👑 King Agent published royal verdict")
         except Exception as e:
             state["final_verdict"] = {"error": str(e)}
-            state["errors"].append(f"Super Agent: {e}")
+            state["errors"].append(f"King Agent: {e}")
         
         return state
     
@@ -935,7 +951,7 @@ class InvestmentAgentSystem:
         workflow.add_node("jury_deliberate", self._jury_deliberate)
         workflow.add_node("judge_verdict", self._judge_verdict)
         workflow.add_node("critique_agent", self._critique_agent)
-        workflow.add_node("super_agent", self._super_agent)
+        workflow.add_node("king_agent", self._king_agent)
         
         # Define edges - Orchestration flow
         workflow.set_entry_point("query_understanding")
@@ -963,9 +979,9 @@ class InvestmentAgentSystem:
         # Critique (Media)
         workflow.add_edge("judge_verdict", "critique_agent")
         
-        # Super Agent (Final Validator)
-        workflow.add_edge("critique_agent", "super_agent")
-        workflow.add_edge("super_agent", END)
+        # King Agent (Final Validator)
+        workflow.add_edge("critique_agent", "king_agent")
+        workflow.add_edge("king_agent", END)
         
         return workflow.compile()
     

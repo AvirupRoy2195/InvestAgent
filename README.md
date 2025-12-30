@@ -1,217 +1,206 @@
-# 🚀 Investment Agent System
+# 👑 Agentic RAG Investment System v2.0
 
-> **Multi-Agent Investment Analysis Framework** with Streamlit UI, Free LLMs & RAG
+> **State-of-the-art 12-Agent System for Financial Analysis with Courtroom Debate, Web Search, and Royal Validation.**
 
-A production-ready investment analysis system using 7 specialized AI agents with a beautiful web interface. Upload your PDF annual reports and get BUY/SELL/HOLD recommendations with full reasoning.
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Models](https://img.shields.io/badge/AI%20Models-10%20Free%20LLMs-green)
 
----
-
-## ✨ Features
-
-- 🤖 **7 AI Agents** - Pro, Against, Judge + 4 Jury Specialists
-- 📄 **PDF Upload** - Drag & drop annual reports for RAG analysis
-- 🆓 **100% Free LLMs** - No API costs (via OpenRouter free tier)
-- 🌐 **Beautiful Streamlit UI** - Modern web interface
-- 📊 **Transparent Reasoning** - Full chain of thought
-- 💾 **Export Reports** - Download as TXT or JSON
+A production-ready investment analysis system that orchestrates **12 specialized AI agents** to debate, critique, and validate investment decisions. It combines **Semantic RAG** (on uploaded PDFs) with **Real-time Web Search** (DuckDuckGo) to provide a trusted "INVEST" or "NOT TO INVEST" verdict.
 
 ---
 
-## 🎯 Quick Start (3 Steps)
+## ✨ Key Features
 
-### 1️⃣ Install Dependencies
-
-```powershell
-cd c:\Users\aviru\Downloads\Invest_agent
-pip install -r requirements.txt
-```
-
-### 2️⃣ Get Free API Key
-
-1. Go to [openrouter.ai](https://openrouter.ai)
-2. Sign up (free)
-3. Copy your API key
-
-### 3️⃣ Run the App
-
-```powershell
-streamlit run app.py
-```
-
-The app opens at `http://localhost:8501` 🎉
-
----
-
-## 📸 Screenshot
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  🚀 Investment Agent System                                      │
-│  Multi-Agent Investment Analysis powered by AI                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────┐   ┌───────────────────────────────────────┐│
-│  │ ⚙️ CONFIG       │   │  📊 Analysis                          ││
-│  │                 │   │                                        ││
-│  │ API Key: ****   │   │  Company: Reliance Industries          ││
-│  │                 │   │  Ticker: RIL                           ││
-│  │ Model:          │   │                                        ││
-│  │ [OLMo 3.1 32B]  │   │  Query: Should I invest in this        ││
-│  │                 │   │  company for long-term growth?         ││
-│  │ 📄 Upload PDFs  │   │                                        ││
-│  │ [Browse...]     │   │  [🚀 Run Multi-Agent Analysis]         ││
-│  │                 │   │                                        ││
-│  │ ✅ 4 files      │   │  ┌─────────────────────────────────┐   ││
-│  │ loaded          │   │  │  🟢 BUY                         │   ││
-│  │                 │   │  │  Confidence: 78%                │   ││
-│  └─────────────────┘   │  └─────────────────────────────────┘   ││
-│                        └───────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🤖 Free LLM Models
-
-All models are **100% FREE** via OpenRouter:
-
-| Model | Best For |
-|-------|----------|
-| **OLMo 3.1 32B Think** ⭐ | Reasoning (Recommended) |
-| **DeepSeek V3.1 Nex** | General performance |
-| **Nvidia Nemotron 30B** | Fast inference |
-| **Xiaomi MiMo V2 Flash** | Quick responses |
+- **🏛️ Agentic Courtroom**: A full Debate workflow (Pro vs. Against) with Cross-Examination.
+- **👥 12 Specialized Agents**: Including Planner, Judge, 4 Jury Specialists, Media Critique, and King Agent.
+- **👑 King Agent (Royal Validator)**: A "Super Agent" that validates the entire process for the final authoritative decision.
+- **🌐 Real-Time Web Search**: The Media/Critique agent searches the web for the latest news and controversies.
+- **📊 Semantic RAG**: Advanced chunking and retrieval from Annual Reports/10-Ks.
+- **🆓 10 Free LLMs**: Optimized allocation of 10 different free models from OpenRouter.
+- **🚦 Strict Binary Decision**: Outputs a clear **INVEST** or **NOT_TO_INVEST** actionable verdict.
 
 ---
 
 ## 🏗️ System Architecture
 
-```
-PDF Upload → RAG Indexing → Query
-                              ↓
-         ┌────────────────────┼────────────────────┐
-         ↓                    ↓                    ↓
-    [Pro Agent]         [Against Agent]      [Jury Council]
-       🟢                    🔴              ├─ 📊 Fundamentals
-    Bullish Case         Bearish Case       ├─ ⚠️ Risk
-                                            ├─ 🌱 ESG
-                                            └─ 💭 Sentiment
-         └────────────────────┼────────────────────┘
-                              ↓
-                       [Judge Agent ⚖️]
-                              ↓
-                    ┌─────────────────┐
-                    │ BUY/SELL/HOLD   │
-                    │ + Confidence    │
-                    │ + Full Reasoning│
-                    └─────────────────┘
-```
+### High-Level Components
 
----
-
-## 📦 Files
-
-| File | Purpose |
-|------|---------|
-| `app.py` | Streamlit web interface |
-| `investment_agent_system.py` | Core 7-agent framework |
-| `requirements.txt` | Python dependencies |
-| `.env` | API configuration |
-| `README.md` | Documentation |
-
----
-
-## 💻 Command Line Mode
-
-You can also run without the UI:
-
-```python
-from investment_agent_system import InvestmentAgentSystem, Config
-
-config = Config()
-system = InvestmentAgentSystem(config)
-system.load_documents(["path/to/annual_report.pdf"])
-
-result = system.analyze(
-    query="Should I invest in this company?",
-    ticker="RIL",
-    company_name="Reliance Industries"
-)
-
-print(result["decision"])
+```mermaid
+graph TD
+    User[User] -->|Query + PDFs| UI[Streamlit UI]
+    UI --> Orchestrator[Orchestrator Layer]
+    Orchestrator -->|Analyze| Planner[Planner]
+    Planner -->|Context| RAG[Semantic RAG Engine]
+    
+    subgraph "Details & Debate"
+        RAG --> Pro[🟢 Pro Agent]
+        RAG --> Against[🔴 Against Agent]
+        RAG --> Jury[👥 Jury Specialists (x4)]
+    end
+    
+    Pro <-->|Cross-Exam| Against
+    Pro --> Judge[👨‍⚖️ Judge]
+    Against --> Judge
+    Jury --> Judge
+    
+    Judge -->|Initial Verdict| Critique[📰 Media Critique]
+    
+    subgraph "Validation"
+        Web[🌐 Web Search] --> Critique
+        Critique --> King[👑 King Agent]
+    end
+    
+    King -->|Final Output| Verdict[🏆 Official Verdict]
 ```
 
 ---
 
-## 📄 Supported Documents
+## 🔄 Process Flow
 
-Upload any financial PDF:
-- ✅ Annual Reports (10-K)
-- ✅ Quarterly Reports (10-Q)
-- ✅ Investor Presentations
-- ✅ Broker Research Reports
-- ✅ Earnings Transcripts
+The system follows a strict 6-phase workflow to ensure robust decision making:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant C as Courtroom Agents
+    participant J as Judge
+    participant M as Media (Critique)
+    participant K as King Agent
+    
+    U->>O: Upload PDFs + Decision Query
+    O->>O: Plan Execution & Retrieve Docs
+    
+    Note over O,C: Phase 1 & 2: Debate
+    O->>C: Pro & Against Opening Statements
+    C->>C: Cross-Examination (Rebuttals)
+    C->>C: Closing Arguments
+    
+    Note over O,C: Phase 3: Jury
+    C->>C: Jury (Risk, ESG, Fund, Sentiment) Deliberates
+    
+    Note over O,J: Phase 4: Initial Verdict
+    C->>J: Submit Evidence
+    J->>J: Render Judge Verdict
+    
+    Note over O,M: Phase 5: External Accountability
+    J->>M: Send Verdict for Critique
+    M->>M: 🌐 Search Web for News/Controversies
+    M->>M: Generate Critique Report
+    
+    Note over O,K: Phase 6: Final Validation
+    M->>K: Send History (Verdict + Critique)
+    K->>K: 👑 Validate & Decide (Invest/Not)
+    K->>U: Publish Official Royal Verdict
+```
 
 ---
 
-## ⚡ Tips for Best Results
+## 💾 Data Flow
 
-1. **Upload recent reports** - Last 1-2 years
-2. **Include multiple documents** - More context = better analysis
-3. **Use specific queries** - "What are the growth catalysts?" vs "Tell me about the company"
-4. **Try different models** - Some work better for certain companies
+How data moves from documents to decision:
+
+```mermaid
+flowchart LR
+    subsraph "Ingestion"
+        PDF[PDF Files] -->|Load| TEXT[Raw Text]
+        TEXT -->|Semantic Chunking| CHUNKS[Chunks]
+        CHUNKS -->|Embed| VEC[Vector DB (FAISS)]
+    end
+
+    subgraph "Inference"
+        QUERY[User Query] -->|Enhance| PLAN[Execution Plan]
+        PLAN -->|Retrieve| CTX[Context]
+        CTX --> AGENTS[12 Agents]
+        AGENTS --> DECISION[Intermediate Decision]
+        WEB[DuckDuckGo Search] -->|News| CRITIQUE[Critique]
+        DECISION & CRITIQUE --> KING[King Agent]
+    end
+    
+    KING --> FINAL[Final JSON Output]
+```
 
 ---
 
-## 🔧 Configuration
+## 🤖 Model Allocation (10 Free Models)
 
-Edit `.env` to customize:
+We utilize a diverse swarm of specialized models via OpenRouter:
+
+| Agent / Role | Model Name | Why? |
+|--------------|------------|------|
+| **👑 King Agent** | `mistralai/devstral-2512` | High-level reasoning & validation |
+| **🧠 Planner** | `nex-agi/deepseek-v3.1-nex-n1` | Complex planning capabilities |
+| **👨‍⚖️ Judge** | `z-ai/glm-4.5-air` | Balanced decision making |
+| **🟢 Pro Agent** | `moonshotai/kimi-k2` | Creative persuasive writing |
+| **🔴 Against Agent** | `tngtech/deepseek-r1t-chimera` | Critical analysis |
+| **📊 Fundamentals** | `tngtech/deepseek-r1t-chimera` | Analytical depth |
+| **⚠️ Risk Jury** | `nvidia/nemotron-3-nano-30b` | Specialized safety awareness |
+| **🌱 ESG Jury** | `allenai/olmo-3.1-32b-think` | Ethical reasoning |
+| **💭 Sentiment** | `xiaomi/mimo-v2-flash` | Fast sentiment analysis |
+| **📰 Critique** | `z-ai/glm-4.5-air` | Critical review |
+| **🔍 Query** | `allenai/olmo-3-32b-think` | Instruction following |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+- Python 3.10+
+- An [OpenRouter API Key](https://openrouter.ai) (Free)
+
+### 2. Installation
 
 ```bash
-# Your OpenRouter API key
-OPENROUTER_API_KEY=sk-or-v1-your-key-here
-
-# Model (see free options above)
-DEFAULT_MODEL=allenai/olmo-3.1-32b-think:free
-
-# Analysis settings
-TEMPERATURE=0.3
-MAX_TOKENS=4096
-TOP_K_RETRIEVAL=5
-```
-
----
-
-## 🐛 Troubleshooting
-
-### "ModuleNotFoundError"
-```bash
+git clone https://github.com/AvirupRoy2195/InvestAgent.git
+cd InvestAgent
 pip install -r requirements.txt
 ```
 
-### "API Key not found"
-Enter your key in the Streamlit sidebar or set in `.env`
+### 3. Configuration
 
-### "No documents loaded"
-Upload PDF files using the sidebar uploader
+Create a `.env` file:
+```env
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+```
 
-### Slow first run
-First run downloads embedding model (~90MB). Subsequent runs are faster.
+### 4. Run the App
 
----
-
-## 📞 Resources
-
-- **OpenRouter**: [openrouter.ai](https://openrouter.ai)
-- **LangGraph**: [langchain-ai.github.io/langgraph](https://langchain-ai.github.io/langgraph)
-- **Streamlit**: [streamlit.io](https://streamlit.io)
+```bash
+streamlit run app_v2.py
+```
+App will open at `http://localhost:8501` (or 8502).
 
 ---
 
-## ⚠️ Disclaimer
+## 📖 How to Use
 
-This is an AI-powered analysis tool for educational purposes. Always combine with your own research and professional financial advice before making investment decisions.
+1.  **Upload Documents**: In the sidebar, upload Annual Reports (PDF). Wait for "Processed success".
+2.  **Enter Details**: In the "Analysis" tab, enter the Stock Ticker (e.g., AAPL) and Company Name.
+3.  **Refine Query**: Use the default investment query or write your own specific question.
+4.  **Run Analysis**: Click "⚖️ Run Courtroom Analysis".
+5.  **View Results**:
+    *   **Analysis Tab**: See the **Royal Verdict** (Invest/Not Invest), confidence, and key drivers.
+    *   **Courtroom Tab**: Read the full debate transcript, cross-examination, and Judge's initial ruling.
+    *   **Critique Tab**: See what the Media Agent found on the web and its critique.
 
 ---
 
-**Happy Investing! 🚀📈**
+## 🛠️ Tech Stack
+
+- **Orchestration**: LangGraph, LangChain
+- **UI**: Streamlit
+- **Search**: DuckDuckGo
+- **Vector Store**: FAISS (CPU)
+- **Embeddings**: Sentence-Transformers (HuggingFace)
+- **LLM Provider**: OpenRouter
+
+---
+
+## 📄 License
+
+MIT License. Free to use and modify.
+
+---
+
+**Built with ❤️ by AvirupRoy2195**
