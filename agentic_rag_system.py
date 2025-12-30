@@ -36,6 +36,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
 
@@ -227,6 +228,10 @@ class AgenticRAGSystem:
         self.documents_loaded = False
         self.extracted_metadata = {}
         self.token_encoder = tiktoken.get_encoding("cl100k_base")
+        
+        # Enhanced Search
+        self.search_wrapper = DuckDuckGoSearchAPIWrapper(max_results=5, time="y")
+        self.search = DuckDuckGoSearchRun(api_wrapper=self.search_wrapper)
         
     def load_documents(self, pdf_paths: List[str] = None) -> int:
         """Load and index PDF documents with semantic chunking"""
@@ -684,6 +689,20 @@ class InvestmentAgentSystem:
             parts.append(f"[Doc {i} - {Path(src).name}]\n{doc}\n")
         return "\n".join(parts)
     
+    def _run_search(self, query: str) -> str:
+        """Run web search and return formatted top 5 results"""
+        try:
+            results = self.search_wrapper.results(query, max_results=5)
+            if not results:
+                return "No results found."
+            formatted = []
+            for i, r in enumerate(results, 1):
+                formatted.append(f"{i}. {r.get('title', 'N/A')}: {r.get('snippet', 'N/A')} ({r.get('link', '')})")
+            return "\n".join(formatted)
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return "Search failed."
+    
     # ========== ORCHESTRATION NODES ==========
     
     def _query_understanding(self, state: GraphState) -> GraphState:
@@ -742,7 +761,7 @@ class InvestmentAgentSystem:
         web_context = ""
         try:
             search_query = f"{state['company_name']} {state['ticker']} bullish growth revenue news"
-            web_context = self.search.invoke(search_query)
+            web_context = self._run_search(search_query)
         except Exception as e:
             logger.warning(f"Pro Agent search failed: {e}")
             
@@ -772,7 +791,7 @@ class InvestmentAgentSystem:
         web_context = ""
         try:
             search_query = f"{state['company_name']} {state['ticker']} bearish risks scandal controversy lawsuits"
-            web_context = self.search.invoke(search_query)
+            web_context = self._run_search(search_query)
         except Exception as e:
             logger.warning(f"Against Agent search failed: {e}")
             
@@ -943,9 +962,9 @@ class InvestmentAgentSystem:
         # 1. Perform Web Search for latest news/controversies
         web_context = "No search results available."
         try:
-            search_query = f"{state['company_name']} {state['ticker']} financial controversy news risks"
-            web_context = self.search.invoke(search_query)
-            logger.info(f"🌐 Critique Agent searched: {search_query}")
+            search_query = f"{state['company_name']} {state['ticker']} financial controversy news risks stock performance"
+            web_context = self._run_search(search_query)
+            logger.info(f"📰 Critique Agent found {len(web_context.splitlines())} news items")
         except Exception as e:
             logger.warning(f"⚠️ Web search failed: {e}")
         
