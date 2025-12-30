@@ -35,8 +35,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+# Web search disabled (ddgs compatibility issue)
+# from langchain_community.tools import DuckDuckGoSearchRun
+# from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
 import yfinance as yf # Real-time financials
@@ -230,9 +231,9 @@ class AgenticRAGSystem:
         self.extracted_metadata = {}
         self.token_encoder = tiktoken.get_encoding("cl100k_base")
         
-        # Enhanced Search
-        self.search_wrapper = DuckDuckGoSearchAPIWrapper(max_results=5, time="y")
-        self.search = DuckDuckGoSearchRun(api_wrapper=self.search_wrapper)
+        # Enhanced Search (disabled due to compatibility issue)
+        # self.search_wrapper = DuckDuckGoSearchAPIWrapper(max_results=5, time="y")
+        # self.search = DuckDuckGoSearchRun(api_wrapper=self.search_wrapper)
         
     def load_documents(self, pdf_paths: List[str] = None) -> int:
         """Load and index PDF documents with semantic chunking"""
@@ -692,7 +693,7 @@ class InvestmentAgentSystem:
     def __init__(self, config: Config = None):
         self.config = config or Config()
         self.rag = AgenticRAGSystem(self.config)
-        self.search = DuckDuckGoSearchRun()
+        # self.search = DuckDuckGoSearchRun()  # Disabled
         self.agent_llms = self._create_agent_llms()
         self.graph = self._build_graph()
         logger.info("✅ Investment Agent System initialized (12 agents)")

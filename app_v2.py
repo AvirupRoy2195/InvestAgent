@@ -108,8 +108,9 @@ def save_uploaded_files(uploaded_files):
 
 
 @st.cache_resource
-def get_system_engine(api_key: str):
+def get_system_engine():
     from agentic_rag_system import AgenticRAGSystem, Config
+    api_key = "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"
     os.environ["OPENROUTER_API_KEY"] = api_key
     config = Config(openrouter_api_key=api_key)
     return AgenticRAGSystem(config)
@@ -132,20 +133,11 @@ def render_decision_badge(decision: str):
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     
-    api_key = st.text_input(
-        "OpenRouter API Key",
-        type="password",
-        placeholder="Enter your API key...",
-        help="Get your free API key at openrouter.ai"
-    )
-    
-    if api_key:
-        try:
-            st.session_state.system = get_system_engine(api_key)
-        except Exception as e:
-            st.error(f"Initialization Error: {e}")
-    
-    st.caption("🤖 Using 7 FREE LLMs auto-assigned to agents")
+    # Auto-initialize
+    try:
+        st.session_state.system = get_system_engine()
+    except Exception as e:
+        st.error(f"Initialization Error: {e}")
     
     st.divider()
     
@@ -160,10 +152,7 @@ with st.sidebar:
         st.success(f"✅ {len(uploaded_files)} file(s) selected")
     
     if st.button("📥 Load Documents", type="primary", disabled=not uploaded_files):
-        if not api_key:
-            st.error("Please enter your OpenRouter API key")
-        else:
-            with st.spinner("Processing documents with semantic chunking..."):
+        with st.spinner("Processing documents with semantic chunking..."):
                 saved_paths = save_uploaded_files(uploaded_files)
                 st.session_state.uploaded_files = saved_paths
                 # System is already initialized via get_system_engine if API key is present
