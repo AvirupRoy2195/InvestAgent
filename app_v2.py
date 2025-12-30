@@ -107,12 +107,12 @@ def save_uploaded_files(uploaded_files):
     return saved_paths
 
 
-# Cached system initialization
 @st.cache_resource
 def get_system_engine(api_key: str):
-    from agentic_rag_system import AgenticRAGSystem
+    from agentic_rag_system import AgenticRAGSystem, Config
     os.environ["OPENROUTER_API_KEY"] = api_key
-    return AgenticRAGSystem()
+    config = Config(openrouter_api_key=api_key)
+    return AgenticRAGSystem(config)
 
 
 def render_decision_badge(decision: str):
