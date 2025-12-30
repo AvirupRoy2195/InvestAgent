@@ -109,11 +109,11 @@ def save_uploaded_files(uploaded_files):
 
 @st.cache_resource
 def get_system_engine():
-    from agentic_rag_system import AgenticRAGSystem, Config
+    from agentic_rag_system import InvestmentAgentSystem, Config
     api_key = "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"
     os.environ["OPENROUTER_API_KEY"] = api_key
     config = Config(openrouter_api_key=api_key)
-    return AgenticRAGSystem(config)
+    return InvestmentAgentSystem(config)
 
 
 def render_decision_badge(decision: str):
@@ -156,11 +156,11 @@ with st.sidebar:
                 saved_paths = save_uploaded_files(uploaded_files)
                 st.session_state.uploaded_files = saved_paths
                 # System is already initialized via get_system_engine if API key is present
-                chunk_count = st.session_state.system.load_documents(saved_paths)
+                chunk_count = st.session_state.system.rag.load_documents(saved_paths)
                 st.session_state.documents_loaded = True
                 
                 # Auto-populate inputs from metadata
-                meta = st.session_state.system.get_extracted_metadata()
+                meta = st.session_state.system.rag.get_extracted_metadata()
                 if meta:
                     if meta.get("ticker"):
                         st.session_state.input_ticker = meta["ticker"]
