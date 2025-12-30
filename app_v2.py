@@ -107,7 +107,12 @@ def save_uploaded_files(uploaded_files):
     return saved_paths
 
 
-# initialize_system replaced by cached get_system_engine
+# Cached system initialization
+@st.cache_resource
+def get_system_engine(api_key: str):
+    from agentic_rag_system import AgenticRAGSystem
+    os.environ["OPENROUTER_API_KEY"] = api_key
+    return AgenticRAGSystem()
 
 
 def render_decision_badge(decision: str):
@@ -133,6 +138,12 @@ with st.sidebar:
         placeholder="Enter your API key...",
         help="Get your free API key at openrouter.ai"
     )
+    
+    if api_key:
+        try:
+            st.session_state.system = get_system_engine(api_key)
+        except Exception as e:
+            st.error(f"Initialization Error: {e}")
     
     st.caption("🤖 Using 7 FREE LLMs auto-assigned to agents")
     
