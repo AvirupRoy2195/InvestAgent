@@ -102,8 +102,8 @@ AGENT_MODEL_MAPPING = {
     
     # Courtroom Agents
     "pro_agent": "moonshotai/kimi-k2:free",
-    "against_agent": "tngtech/deepseek-r1t-chimera:free",
-    "judge_agent": "z-ai/glm-4.5-air:free",
+    "against_agent": "moonshotai/kimi-k2:free",
+    "judge_agent": "tngtech/deepseek-r1t-chimera:free",  # Best Reasoning (CoT)
     
     # Jury Specialists
     "jury_fundamentals": "tngtech/deepseek-r1t-chimera:free",
@@ -114,7 +114,7 @@ AGENT_MODEL_MAPPING = {
     # Media/Critique
     "critique_agent": "z-ai/glm-4.5-air:free",
     
-    # King Agent (Final Validator) - Devstral 2512
+    # King Agent (Final Validator) - Most Powerful
     "king_agent": "mistralai/devstral-2512:free",
 }
 
@@ -389,19 +389,47 @@ class GraphState(TypedDict):
 # AGENT PROMPTS
 # ============================================================================
 
-QUERY_UNDERSTANDING_PROMPT = """You are the Query Understanding Agent. Parse the user's investment query.
+QUERY_UNDERSTANDING_PROMPT = """You are the QUERY ORCHESTRATOR. Analyze the user's investment query.
 
-USER QUERY: {query}
+QUERY: {query}
 
-Extract and return JSON:
+Return JSON:
 {{
-    "intent": "investment_analysis|comparison|general_question",
-    "ticker": "extracted ticker or null",
-    "company_name": "extracted company name or null",
-    "time_horizon": "short|medium|long|unspecified",
-    "risk_tolerance": "low|medium|high|unspecified",
-    "specific_focus": ["list of specific areas to analyze"],
-    "requires_rag": true/false
+    "intent": "investment_analysis|general_info|comparative",
+    "key_topics": ["topic1", "topic2"],
+    "required_specialties": ["fundamentals", "risk", "sentiment"],
+    "time_horizon": "short|medium|long"
+}}"""
+
+# Sub-Agent Strategy Prompts
+PRO_STRATEGY_PROMPT = """You are a LEGAL STRATEGIST for the PRO (Bullish) team. 
+Your goal: Brainstorm 3 manipulative, logical, and psychologically persuasive arguments to convince a jury to INVEST.
+
+Context:
+{web_context}
+
+Company: {company_name} ({ticker})
+
+Return JSON:
+{{
+    "strategy_angles": ["Angle 1: The Visionary Future", "Angle 2: Undervalued Gem", "Angle 3: Market Dominance"],
+    "psychological_hooks": ["Fear of Missing Out (FOMO)", "Authority bias"],
+    "key_evidence_to_highlight": ["specific revenue growth", "new product launch"]
+}}"""
+
+AGAINST_STRATEGY_PROMPT = """You are a LEGAL STRATEGIST for the AGAINST (Bearish) team. 
+Your goal: Brainstorm 3 manipulative, logical, and psychologically persuasive arguments to convince a jury NOT TO INVEST.
+
+Context:
+{web_context}
+
+Company: {company_name} ({ticker})
+
+Return JSON:
+{{
+    "strategy_angles": ["Angle 1: Hidden Risks", "Angle 2: Overhyped Valuation", "Angle 3: Management Red Flags"],
+    "psychological_hooks": ["Loss Aversion", "Skepticism"],
+    "weaknesses_to_exploit": ["declining margins", "legal troubles"]
 }}"""
 
 PLANNER_PROMPT = """You are the Planner Agent. Create an execution plan for this analysis.
@@ -418,48 +446,50 @@ Create a plan as JSON:
     "expected_duration": "short|medium|long"
 }}"""
 
-PRO_OPENING_PROMPT = """You are the PRO AGENT (Bullish Advocate) in an investment courtroom.
+PRO_OPENING_PROMPT = """You are the PRO AGENT (Bullish Advocate).
 
-COMPANY: {company_name} ({ticker})
-QUERY: {query}
+STRATEGY PLAN (from your legal strategist):
+{strategy}
 
-EVIDENCE FROM DOCUMENTS:
-{context}
-
-WEB SEARCH NEWS (BULLISH CONTEXT):
+WEB RESEARCH:
 {web_context}
 
-Deliver your OPENING STATEMENT. Build the strongest bullish case:
+DOCUMENT EVIDENCE:
+{context}
+
+USER QUERY: {query}
+
+Construct a powerful, persuasive OPENING STATEMENT. Use the strategy angles provided.
+Be manipulative but backed by logic. Make the jury feel they MUST invest.
 
 Return JSON:
 {{
-    "opening_statement": "Your 2-3 paragraph opening argument",
+    "opening_statement": "Your 3-paragraph opening speech",
     "key_bullish_points": ["Point 1", "Point 2", "Point 3"],
-    "evidence_cited": ["specific evidence from documents"],
-    "growth_catalysts": ["upcoming positive events"],
-    "bull_case_confidence": 0.0-1.0
+    "sentiment_score": 0.8-1.0
 }}"""
 
-AGAINST_OPENING_PROMPT = """You are the AGAINST AGENT (Bearish Advocate) in an investment courtroom.
+AGAINST_OPENING_PROMPT = """You are the AGAINST AGENT (Bearish Advocate).
 
-COMPANY: {company_name} ({ticker})
-QUERY: {query}
+STRATEGY PLAN (from your legal strategist):
+{strategy}
 
-EVIDENCE FROM DOCUMENTS:
-{context}
-
-WEB SEARCH NEWS (BEARISH CONTEXT):
+WEB RESEARCH:
 {web_context}
 
-Deliver your OPENING STATEMENT. Present all risks and concerns:
+DOCUMENT EVIDENCE:
+{context}
+
+USER QUERY: {query}
+
+Construct a powerful, persuasive OPENING STATEMENT. Use the strategy angles provided.
+Be skeptical, cynical, and logical. Expose the flaws.
 
 Return JSON:
 {{
-    "opening_statement": "Your 2-3 paragraph opening argument",
-    "key_bearish_points": ["Risk 1", "Risk 2", "Risk 3"],
-    "risk_evidence": ["specific concerns from documents"],
-    "downside_scenarios": ["what could go wrong"],
-    "bear_case_confidence": 0.0-1.0
+    "opening_statement": "Your 3-paragraph opening speech",
+    "key_bearish_points": ["Point 1", "Point 2", "Point 3"],
+    "sentiment_score": 0.0-0.2
 }}"""
 
 CROSS_EXAMINATION_PROMPT = """You are the {agent_role} AGENT in cross-examination.
@@ -766,18 +796,37 @@ class InvestmentAgentSystem:
             logger.warning(f"Pro Agent search failed: {e}")
             
         if not web_context: web_context = "No relevant news found."
-            
+        
+        # 1. Sub-Agent: Strategy Formulation
+        strategy = {}
+        try:
+            strat_prompt = PRO_STRATEGY_PROMPT.format(
+                web_context=web_context,
+                company_name=state["company_name"],
+                ticker=state["ticker"]
+            )
+            # Self-reflection call (using same model or planner model for variety)
+            strat_response = self._get_llm("pro_agent").invoke([HumanMessage(content=strat_prompt)])
+            strategy = self._parse_response(strat_response.content)
+            logger.info("💡 Pro Agent Strategy Formulated")
+        except Exception as e:
+            logger.warning(f"Pro Strategy failed: {e}")
+            strategy = {"strategy_angles": ["General Bullishness"]}
+
+        # 2. Final Opening Statement
         prompt = PRO_OPENING_PROMPT.format(
             company_name=state["company_name"],
             ticker=state["ticker"],
             query=state["query"],
             context=self._format_context(state["retrieved_documents"], state["document_sources"]),
-            web_context=web_context
+            web_context=web_context,
+            strategy=json.dumps(strategy, indent=2)
         )
         try:
             response = self._get_llm("pro_agent").invoke([HumanMessage(content=prompt)])
             state["pro_opening"] = self._parse_response(response.content)
-            logger.info("🟢 Pro Agent delivered opening statement (with search)")
+            state["pro_opening"]["strategy_used"] = strategy # Save strategy for context
+            logger.info("🟢 Pro Agent delivered opening statement (with strategy & search)")
         except Exception as e:
             state["pro_opening"] = {"error": str(e)}
             state["errors"].append(f"Pro Opening: {e}")
@@ -796,18 +845,36 @@ class InvestmentAgentSystem:
             logger.warning(f"Against Agent search failed: {e}")
             
         if not web_context: web_context = "No relevant news found."
+        
+        # 1. Sub-Agent: Strategy Formulation
+        strategy = {}
+        try:
+            strat_prompt = AGAINST_STRATEGY_PROMPT.format(
+                web_context=web_context,
+                company_name=state["company_name"],
+                ticker=state["ticker"]
+            )
+            strat_response = self._get_llm("against_agent").invoke([HumanMessage(content=strat_prompt)])
+            strategy = self._parse_response(strat_response.content)
+            logger.info("💡 Against Agent Strategy Formulated")
+        except Exception as e:
+            logger.warning(f"Against Strategy failed: {e}")
+            strategy = {"strategy_angles": ["General Skepticism"]}
             
+        # 2. Final Opening Statement
         prompt = AGAINST_OPENING_PROMPT.format(
             company_name=state["company_name"],
             ticker=state["ticker"],
             query=state["query"],
             context=self._format_context(state["retrieved_documents"], state["document_sources"]),
-            web_context=web_context
+            web_context=web_context,
+            strategy=json.dumps(strategy, indent=2)
         )
         try:
             response = self._get_llm("against_agent").invoke([HumanMessage(content=prompt)])
             state["against_opening"] = self._parse_response(response.content)
-            logger.info("🔴 Against Agent delivered opening statement (with search)")
+            state["against_opening"]["strategy_used"] = strategy # Save strategy
+            logger.info("🔴 Against Agent delivered opening statement (with strategy & search)")
         except Exception as e:
             state["against_opening"] = {"error": str(e)}
             state["errors"].append(f"Against Opening: {e}")
