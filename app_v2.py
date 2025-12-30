@@ -287,6 +287,17 @@ with tab2:
     else:
         result = st.session_state.analysis_result
         
+        # Market Snapshot
+        if result.get("financial_metrics") and not result["financial_metrics"].get("error"):
+            st.markdown("### 📈 Market Snapshot")
+            m = result["financial_metrics"]
+            cols = st.columns(4)
+            cols[0].metric("Price", f"{m.get('Currency','')} {m.get('Current Price')}")
+            cols[1].metric("Market Cap", m.get("Market Cap", "N/A"))
+            cols[2].metric("P/E Ratio", m.get("Trailing PE", "N/A"))
+            cols[3].metric("Beta", m.get("Beta", "N/A"))
+            st.divider()
+            
         # PRO CASE
         st.markdown("### 🟢 Pro Agent (Bullish Advocate)")
         pro_case = result.get("pro_case", {})

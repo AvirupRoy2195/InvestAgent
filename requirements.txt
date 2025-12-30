@@ -58,4 +58,4 @@ watchdog>=3.0.0
 # chromadb>=0.4.0          # Alternative vector store
 # pinecone-client>=2.2.0   # Cloud vector store
 # redis>=5.0.0             # Caching
-# yfinance>=0.2.0          # Real-time stock data
+yfinance>=0.2.0          # Real-time stock data

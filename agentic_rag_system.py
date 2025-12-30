@@ -39,6 +39,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
+import yfinance as yf # Real-time financials
 
 # Download NLTK data
 try:
@@ -352,6 +353,7 @@ class GraphState(TypedDict):
     # RAG
     retrieved_documents: List[str]
     document_sources: List[str]
+    financial_metrics: Optional[Dict]
     
     # Courtroom - Opening
     pro_opening: Optional[Dict]
@@ -408,6 +410,9 @@ Your goal: Brainstorm 3 manipulative, logical, and psychologically persuasive ar
 Context:
 {web_context}
 
+FINANCIAL METRICS:
+{financial_data}
+
 Company: {company_name} ({ticker})
 
 Return JSON:
@@ -422,6 +427,9 @@ Your goal: Brainstorm 3 manipulative, logical, and psychologically persuasive ar
 
 Context:
 {web_context}
+
+FINANCIAL METRICS:
+{financial_data}
 
 Company: {company_name} ({ticker})
 
@@ -538,6 +546,9 @@ CROSS-EXAMINATION:
 DOCUMENT EVIDENCE:
 {context}
 
+FINANCIAL DATA:
+{financial_data}
+
 Take observation notes focusing on {specialty}:
 
 Return JSON:
@@ -567,6 +578,12 @@ FULL DEBATE TRANSCRIPT:
 - Cross-Examination: {cross_exam}
 - Pro Closing: {pro_closing}
 - Against Closing: {against_closing}
+
+- Pro Closing: {pro_closing}
+- Against Closing: {against_closing}
+
+FINANCIAL DATA:
+{financial_data}
 
 YOUR EARLIER OBSERVATIONS: {observations}
 
@@ -732,6 +749,45 @@ class InvestmentAgentSystem:
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return "Search failed."
+            
+    def _fetch_financials(self, ticker: str) -> Dict:
+        """Fetch quantitative data from yfinance"""
+        if not ticker: return {}
+        try:
+            # Try raw ticker first
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            
+            # If empty, might need suffix for Indian stocks? 
+            # Heuristic: if no name/price found, and contains no dot, try .NS
+            if "regularMarketPrice" not in info and "." not in ticker:
+                logger.info(f"Retrying with .NS suffix for {ticker}")
+                stock = yf.Ticker(f"{ticker}.NS")
+                info = stock.info
+
+            metrics = {
+                "Current Price": info.get("currentPrice", info.get("regularMarketPrice", "N/A")),
+                "Market Cap": info.get("marketCap", "N/A"),
+                "Trailing PE": info.get("trailingPE", "N/A"),
+                "Forward PE": info.get("forwardPE", "N/A"),
+                "Revenue Growth": info.get("revenueGrowth", "N/A"),
+                "Beta": info.get("beta", "N/A"),
+                "52 Week High": info.get("fiftyTwoWeekHigh", "N/A"),
+                "Recommendation": info.get("recommendationKey", "N/A"),
+                "Currency": info.get("currency", "USD")
+            }
+            # Format Market Cap
+            mc = metrics["Market Cap"]
+            if isinstance(mc, (int, float)):
+                if mc > 1e9:
+                    metrics["Market Cap"] = f"{mc / 1e9:.2f}B"
+                elif mc > 1e6:
+                    metrics["Market Cap"] = f"{mc / 1e6:.2f}M"
+            
+            return metrics
+        except Exception as e:
+            logger.error(f"yfinance failed for {ticker}: {e}")
+            return {"error": "Data unavailable"}
     
     # ========== ORCHESTRATION NODES ==========
     
@@ -775,6 +831,16 @@ class InvestmentAgentSystem:
             state["retrieved_documents"] = [r["content"] for r in results]
             state["document_sources"] = [r["source"] for r in results]
             logger.info(f"📚 Retrieved {len(results)} documents")
+            
+            # Fetch Quantitative Data
+            try:
+                fin_data = self._fetch_financials(state["ticker"])
+                state["financial_metrics"] = fin_data
+                logger.info(f"📊 Financials fetched: {fin_data}")
+            except Exception as e:
+                logger.error(f"Quant failed: {e}")
+                state["financial_metrics"] = {}
+                
         except Exception as e:
             state["retrieved_documents"] = []
             state["document_sources"] = []
@@ -802,6 +868,7 @@ class InvestmentAgentSystem:
         try:
             strat_prompt = PRO_STRATEGY_PROMPT.format(
                 web_context=web_context,
+                financial_data=json.dumps(state.get("financial_metrics", {}), indent=2),
                 company_name=state["company_name"],
                 ticker=state["ticker"]
             )
@@ -851,6 +918,7 @@ class InvestmentAgentSystem:
         try:
             strat_prompt = AGAINST_STRATEGY_PROMPT.format(
                 web_context=web_context,
+                financial_data=json.dumps(state.get("financial_metrics", {}), indent=2),
                 company_name=state["company_name"],
                 ticker=state["ticker"]
             )
@@ -958,7 +1026,10 @@ class InvestmentAgentSystem:
                 pro_opening=json.dumps(state["pro_opening"]),
                 against_opening=json.dumps(state["against_opening"]),
                 cross_exam=json.dumps({"pro": state["pro_rebuttal"], "against": state["against_rebuttal"]}),
-                context=context
+                against_opening=json.dumps(state["against_opening"]),
+                cross_exam=json.dumps({"pro": state["pro_rebuttal"], "against": state["against_rebuttal"]}),
+                context=context,
+                financial_data=json.dumps(state.get("financial_metrics", {}), indent=2)
             )
             try:
                 response = self._get_llm(f"jury_{specialty}").invoke([HumanMessage(content=prompt)])
@@ -983,7 +1054,8 @@ class InvestmentAgentSystem:
                 cross_exam=json.dumps({"pro": state["pro_rebuttal"], "against": state["against_rebuttal"]}),
                 pro_closing=json.dumps(state["pro_closing"]),
                 against_closing=json.dumps(state["against_closing"]),
-                observations=json.dumps(state["jury_observations"].get(specialty, {}))
+                observations=json.dumps(state["jury_observations"].get(specialty, {})),
+                financial_data=json.dumps(state.get("financial_metrics", {}), indent=2)
             )
             try:
                 response = self._get_llm(f"jury_{specialty}").invoke([HumanMessage(content=prompt)])
@@ -1009,7 +1081,8 @@ class InvestmentAgentSystem:
             against_opening=json.dumps(state["against_opening"]),
             against_rebuttal=json.dumps(state["against_rebuttal"]),
             against_closing=json.dumps(state["against_closing"]),
-            jury_deliberations=json.dumps(state["jury_deliberations"], indent=2)
+            jury_deliberations=json.dumps(state["jury_deliberations"], indent=2),
+            financial_data=json.dumps(state.get("financial_metrics", {}), indent=2)
         )
         try:
             response = self._get_llm("judge_agent").invoke([HumanMessage(content=prompt)])
@@ -1177,6 +1250,7 @@ class InvestmentAgentSystem:
             "ticker": ticker,
             "company_name": company_name,
             "query": query,
+            "financial_metrics": final_state.get("financial_metrics", {}),
             "decision": final_state.get("judge_verdict"),
             "pro_case": {
                 "opening": final_state.get("pro_opening"),
