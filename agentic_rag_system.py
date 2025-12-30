@@ -225,6 +225,7 @@ class AgenticRAGSystem:
         self.embeddings = HuggingFaceEmbeddings(model_name=config.embedding_model)
         self.vectorstore = None
         self.documents_loaded = False
+        self.extracted_metadata = {}
         self.token_encoder = tiktoken.get_encoding("cl100k_base")
         
     def load_documents(self, pdf_paths: List[str] = None) -> int:
@@ -249,6 +250,15 @@ class AgenticRAGSystem:
                     chunks = self.chunker.create_semantic_chunks(page.page_content, metadata)
                     all_chunks.extend(chunks)
                 
+                # Extract metadata from first page of first doc
+                if not self.extracted_metadata and pages:
+                    try:
+                        self._extract_initial_metadata(pages[0].page_content)
+                    except Exception as e:
+                        logger.warning(f"Metadata extraction failed: {e}")
+            except Exception as e:
+                logger.error(f"Error loading {pdf_path}: {e}")
+                
                 logger.info(f"  → {len([c for c in all_chunks if c.metadata.get('source_file') == str(pdf_path)])} semantic chunks")
             except Exception as e:
                 logger.error(f"Error loading {pdf_path}: {e}")
@@ -259,6 +269,20 @@ class AgenticRAGSystem:
             logger.info(f"✅ Indexed {len(all_chunks)} semantic chunks")
         
         return len(all_chunks)
+
+    def _extract_initial_metadata(self, text: str):
+        """Extract company info from text"""
+        prompt = METADATA_EXTRACTION_PROMPT.format(text=text[:2000])
+        try:
+            # Use query agent for extraction
+            response = self._get_llm("query_understanding").invoke([HumanMessage(content=prompt)])
+            self.extracted_metadata = self._parse_response(response.content)
+            logger.info(f"📄 Extracted Metadata: {self.extracted_metadata}")
+        except Exception as e:
+            logger.error(f"Metadata extraction error: {e}")
+    
+    def get_extracted_metadata(self) -> Dict:
+        return self.extracted_metadata
     
     def multi_query_retrieve(self, query: str, company: str, ticker: str) -> List[Dict]:
         """Multi-query retrieval with different perspectives"""
@@ -397,6 +421,9 @@ QUERY: {query}
 EVIDENCE FROM DOCUMENTS:
 {context}
 
+WEB SEARCH NEWS (BULLISH CONTEXT):
+{web_context}
+
 Deliver your OPENING STATEMENT. Build the strongest bullish case:
 
 Return JSON:
@@ -415,6 +442,9 @@ QUERY: {query}
 
 EVIDENCE FROM DOCUMENTS:
 {context}
+
+WEB SEARCH NEWS (BEARISH CONTEXT):
+{web_context}
 
 Deliver your OPENING STATEMENT. Present all risks and concerns:
 
@@ -478,10 +508,20 @@ Take observation notes focusing on {specialty}:
 Return JSON:
 {{
     "observations": ["key observations from debate"],
-    "pro_strength": 0.0-1.0,
-    "against_strength": 0.0-1.0,
-    "{specialty}_concerns": ["specific concerns in your area"],
-    "preliminary_lean": "pro|against|neutral"
+    "verdict_implication": "positive|negative",
+    "score": 1-10 (10 = perfect for this specialty)
+}}"""
+
+METADATA_EXTRACTION_PROMPT = """Analyze the following text from a financial report document (cover page/intro) and extract the Company Name and Stock Ticker.
+
+TEXT:
+{text}
+
+Return JSON:
+{{
+    "company_name": "Full Company Name",
+    "ticker": "TICKER Symbol",
+    "year": "Report Year"
 }}"""
 
 JURY_DELIBERATION_PROMPT = """You are a JURY SPECIALIST ({specialty}) in final deliberation.
@@ -695,38 +735,60 @@ class InvestmentAgentSystem:
     # ========== COURTROOM NODES ==========
     
     def _pro_opening(self, state: GraphState) -> GraphState:
-        """Pro agent opening statement"""
+        """Pro agent presents opening statement with Web Search reinforcement"""
         state["current_phase"] = "pro_opening"
-        context = self._format_context(state["retrieved_documents"], state["document_sources"])
+        
+        # Web Search (Bullish)
+        web_context = ""
+        try:
+            search_query = f"{state['company_name']} {state['ticker']} bullish growth revenue news"
+            web_context = self.search.invoke(search_query)
+        except Exception as e:
+            logger.warning(f"Pro Agent search failed: {e}")
+            
+        if not web_context: web_context = "No relevant news found."
+            
         prompt = PRO_OPENING_PROMPT.format(
             company_name=state["company_name"],
             ticker=state["ticker"],
             query=state["query"],
-            context=context
+            context=self._format_context(state["retrieved_documents"], state["document_sources"]),
+            web_context=web_context
         )
         try:
             response = self._get_llm("pro_agent").invoke([HumanMessage(content=prompt)])
             state["pro_opening"] = self._parse_response(response.content)
-            logger.info("🟢 Pro Opening Statement delivered")
+            logger.info("🟢 Pro Agent delivered opening statement (with search)")
         except Exception as e:
             state["pro_opening"] = {"error": str(e)}
             state["errors"].append(f"Pro Opening: {e}")
         return state
     
     def _against_opening(self, state: GraphState) -> GraphState:
-        """Against agent opening statement"""
+        """Against agent presents opening statement with Web Search reinforcement"""
         state["current_phase"] = "against_opening"
-        context = self._format_context(state["retrieved_documents"], state["document_sources"])
+        
+        # Web Search (Bearish)
+        web_context = ""
+        try:
+            search_query = f"{state['company_name']} {state['ticker']} bearish risks scandal controversy lawsuits"
+            web_context = self.search.invoke(search_query)
+        except Exception as e:
+            logger.warning(f"Against Agent search failed: {e}")
+            
+        if not web_context: web_context = "No relevant news found."
+            
         prompt = AGAINST_OPENING_PROMPT.format(
             company_name=state["company_name"],
             ticker=state["ticker"],
             query=state["query"],
-            context=context
+            context=self._format_context(state["retrieved_documents"], state["document_sources"]),
+            web_context=web_context
         )
         try:
             response = self._get_llm("against_agent").invoke([HumanMessage(content=prompt)])
             state["against_opening"] = self._parse_response(response.content)
-            logger.info("🔴 Against Opening Statement delivered")
+            logger.info("🔴 Against Agent delivered opening statement (with search)")
         except Exception as e:
             state["against_opening"] = {"error": str(e)}
             state["errors"].append(f"Against Opening: {e}")

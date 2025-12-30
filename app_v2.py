@@ -11,20 +11,13 @@ Features:
 Run with: streamlit run app_v2.py
 """
 
+# Delayed imports for performance
 import streamlit as st
 import os
 import json
 import tempfile
 from pathlib import Path
 from datetime import datetime
-
-# Import new agentic system
-from agentic_rag_system import (
-    InvestmentAgentSystem,
-    Config,
-    AGENT_MODEL_MAPPING,
-    generate_report
-)
 
 # Page configuration
 st.set_page_config(
@@ -114,13 +107,7 @@ def save_uploaded_files(uploaded_files):
     return saved_paths
 
 
-def initialize_system(api_key: str):
-    """Initialize the agentic investment system"""
-    config = Config(
-        openrouter_api_key=api_key,
-        documents_dir=st.session_state.temp_dir
-    )
-    return InvestmentAgentSystem(config)
+# initialize_system replaced by cached get_system_engine
 
 
 def render_decision_badge(decision: str):
@@ -151,7 +138,7 @@ with st.sidebar:
     
     st.divider()
     
-    st.markdown("### 📄 Upload Documents")
+    st.markdown("### 📄 Step 1: Upload Documents")
     uploaded_files = st.file_uploader(
         "Choose PDF files",
         type=["pdf"],
@@ -168,9 +155,19 @@ with st.sidebar:
             with st.spinner("Processing documents with semantic chunking..."):
                 saved_paths = save_uploaded_files(uploaded_files)
                 st.session_state.uploaded_files = saved_paths
-                st.session_state.system = initialize_system(api_key)
+                # System is already initialized via get_system_engine if API key is present
                 chunk_count = st.session_state.system.load_documents(saved_paths)
                 st.session_state.documents_loaded = True
+                
+                # Auto-populate inputs from metadata
+                meta = st.session_state.system.get_extracted_metadata()
+                if meta:
+                    if meta.get("ticker"):
+                        st.session_state.input_ticker = meta["ticker"]
+                    if meta.get("company_name"):
+                        st.session_state.input_company = meta["company_name"]
+                    st.toast(f"✅ Detected: {meta.get('company_name')} ({meta.get('ticker')})")
+                
                 st.success(f"✅ Loaded {chunk_count} semantic chunks!")
     
     st.divider()
@@ -191,39 +188,48 @@ st.markdown('<p style="color:#666;font-size:1.1rem;">12-Agent System • Semanti
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Analysis", "⚖️ Courtroom", "📰 Critique", "ℹ️ About"])
 
 with tab1:
-    st.markdown("## 🔍 Run Investment Analysis")
+    st.markdown("## 🔍 Step 2: Run Analysis")
     
+    # Always show input section
+    # Initialize session state for inputs if not needed
+    if "input_ticker" not in st.session_state:
+        st.session_state.input_ticker = ""
+    if "input_company" not in st.session_state:
+        st.session_state.input_company = ""
+
     # Always show input section
     col1, col2 = st.columns(2)
     with col1:
-        ticker = st.text_input("Stock Ticker", value="RIL")
+        ticker = st.text_input("Stock Ticker", key="input_ticker", placeholder="e.g. AAPL")
     with col2:
-        company_name = st.text_input("Company Name", value="Reliance Industries Limited")
+        company_name = st.text_input("Company Name", key="input_company", placeholder="e.g. Apple Inc.")
     
     query = st.text_area(
         "Investment Query",
-        value="Should I invest in this company for long-term growth? Analyze financials, risks, and provide recommendation.",
         height=100,
-        placeholder="Ask about the company's future, risks, or financial health..."
+        placeholder="Enter your investment question here (e.g. Should I invest in this company? Analyze risks)..."
     )
     
     if not st.session_state.documents_loaded:
         st.info("👆 Enter your query above, but you must **Upload PDF Documents** in the sidebar to run the analysis.")
         
-        st.markdown("### 🏛️ Courtroom Flow")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.markdown("**1. Query**\n\n🧠 Understanding")
-        with col2:
-            st.markdown("**2. Debate**\n\n🟢 Pro vs 🔴 Against")
-        with col3:
-            st.markdown("**3. Jury**\n\n👥 4 Specialists")
-        with col4:
-            st.markdown("**4. Judge**\n\n👨‍⚖️ Verdict")
-        with col5:
-            st.markdown("**5. Media**\n\n📰 Critique")
-        with st.columns(1)[0]:
-            st.markdown("**6. King Agent**\n\n👑 Royal Validator")
+        st.markdown("### 🏛️ Process Flow")
+        # Visual Flowchart using custom CSS
+        st.markdown("""
+        <div style="display: flex; justify-content: space-between; flex-wrap: wrap; text-align: center; margin-bottom: 20px;">
+            <div style="flex: 1; min-width: 80px;">🧠<br>Query</div>
+            <div style="align-self: center;">→</div>
+            <div style="flex: 1; min-width: 80px;">🟢🔴<br>Debate</div>
+            <div style="align-self: center;">→</div>
+            <div style="flex: 1; min-width: 80px;">👥<br>Jury</div>
+            <div style="align-self: center;">→</div>
+            <div style="flex: 1; min-width: 80px;">👨‍⚖️<br>Judge</div>
+            <div style="align-self: center;">→</div>
+            <div style="flex: 1; min-width: 80px;">🌐<br>Media</div>
+            <div style="align-self: center;">→</div>
+            <div style="flex: 1; min-width: 80px; font-weight: bold; color: #4fd1c5;">👑<br>King</div>
+        </div>
+        """, unsafe_allow_html=True)
             
     # Run button
     run_disabled = not st.session_state.documents_loaded
@@ -231,42 +237,29 @@ with tab1:
             if not ticker or not company_name:
                 st.error("Please enter ticker and company name")
             else:
-                # Progress tracking
-                progress = st.progress(0)
-                status = st.empty()
-                
-                # Phase indicators
-                phases = st.columns(6)
-                phase_status = {
-                    "Query": phases[0].empty(),
-                    "Opening": phases[1].empty(),
-                    "Cross-Exam": phases[2].empty(),
-                    "Closing": phases[3].empty(),
-                    "Jury": phases[4].empty(),
-                    "Judge": phases[5].empty(),
-                    "King": st.empty()
-                }
-                for name, ph in phase_status.items():
-                    ph.markdown(f"⏳ {name}")
-                
                 try:
-                    status.text("🧠 Query Understanding + Planning...")
-                    phase_status["Query"].markdown("🔄 Query")
-                    progress.progress(10)
-                    
-                    status.text("⚖️ Running courtroom analysis (this may take 2-5 minutes)...")
-                    
-                    result = st.session_state.system.analyze(
-                        query=query,
-                        ticker=ticker,
-                        company_name=company_name
-                    )
-                    
-                    # Update all phases
-                    for name in phase_status:
-                        phase_status[name].markdown(f"✅ {name}")
-                    progress.progress(100)
-                    status.text("✅ Analysis complete!")
+                    progress = st.progress(0)
+                    with st.status("🚀 Orchestrating 12 Agents...", expanded=True) as status:
+                        progress.progress(10)
+                        
+                        status.write("🧠 Query Understanding & Planning...")
+                        # We need to access the system without re-initializing
+                        
+                        status.write("⚖️ Pro vs Against Debate (Searching Web)...")
+                        
+                        result = st.session_state.system.analyze(
+                            query=query,
+                            ticker=ticker,
+                            company_name=company_name
+                        )
+                        
+                        status.write("👥 Jury Deliberation...")
+                        progress.progress(60)
+                        status.write("👨‍⚖️ Judge Rendering Verdict...")
+                        progress.progress(80)
+                        status.write("🌐 Media Critique & King Agent Validation...")
+                        progress.progress(100)
+                        status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
                     
                     st.session_state.analysis_result = result
                     st.success("🎉 Courtroom analysis complete! See Courtroom & Critique tabs.")
@@ -455,6 +448,7 @@ with tab3:
         st.markdown("### 💾 Export Results")
         col1, col2 = st.columns(2)
         with col1:
+            from agentic_rag_system import generate_report
             report = generate_report(result)
             st.download_button("📄 Download Report", report, 
                              f"courtroom_report_{result.get('ticker', 'analysis')}.txt", "text/plain")
