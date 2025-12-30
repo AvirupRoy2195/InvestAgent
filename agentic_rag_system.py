@@ -1026,8 +1026,6 @@ class InvestmentAgentSystem:
                 pro_opening=json.dumps(state["pro_opening"]),
                 against_opening=json.dumps(state["against_opening"]),
                 cross_exam=json.dumps({"pro": state["pro_rebuttal"], "against": state["against_rebuttal"]}),
-                against_opening=json.dumps(state["against_opening"]),
-                cross_exam=json.dumps({"pro": state["pro_rebuttal"], "against": state["against_rebuttal"]}),
                 context=context,
                 financial_data=json.dumps(state.get("financial_metrics", {}), indent=2)
             )
