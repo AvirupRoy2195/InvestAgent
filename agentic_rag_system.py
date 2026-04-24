@@ -40,17 +40,14 @@ from langchain_core.documents import Document
 # from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-import yfinance as yf # Real-time financials
+import yfinance as yf  # Re-enabled for financials
 
-# Download NLTK data
+# Avoid network work at import time. If NLTK tokenizers are unavailable,
+# SemanticChunker.sentence_tokenize falls back to a regex splitter.
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
-    nltk.download('punkt', quiet=True)
-try:
-    nltk.data.find('tokenizers/punkt_tab')
-except LookupError:
-    nltk.download('punkt_tab', quiet=True)
+    pass
 
 load_dotenv()
 
@@ -68,7 +65,7 @@ class Config:
     # OpenRouter
     openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    default_model: str = field(default_factory=lambda: os.getenv("DEFAULT_MODEL", "allenai/olmo-3.1-32b-think:free"))
+    default_model: str = field(default_factory=lambda: os.getenv("DEFAULT_MODEL", "google/gemma-4-26b-a4b-it:free"))
     temperature: float = 0.3
     max_tokens: int = 4096
     
@@ -93,46 +90,44 @@ class Config:
     max_critique_loops: int = 2
 
 
-# Model mapping for all 12 agents
-# Using 8 FREE models: 3 new (kimi-k2, glm-4.5-air, deepseek-r1t-chimera) + 5 original
-# Model mapping for all 13 agents (added Super Agent)
-# Using 10 FREE models: 2 new (devstral, deepseek-v3.1) + 8 previous
+# Model mapping for all agents (now with sub-agents for Judge and King)
+# Uses the user-supplied OpenRouter free text-generation models.
 AGENT_MODEL_MAPPING = {
     # Orchestration Layer
-    "query_understanding": "allenai/olmo-3-32b-think:free", # Good instruction following
-    "planner": "nex-agi/deepseek-v3.1-nex-n1:free",        # Strong reasoning for planning
+    "query_understanding": "google/gemma-4-26b-a4b-it:free",
+    "planner": "minimax/minimax-m2.5:free",
     
-    # Courtroom Agents
-    "pro_agent": "moonshotai/kimi-k2:free",
-    "against_agent": "moonshotai/kimi-k2:free",
-    "judge_agent": "tngtech/deepseek-r1t-chimera:free",  # Best Reasoning (CoT)
+    # Courtroom Debate Agents - using different models for pro/against
+    "pro_agent": "z-ai/glm-4.5-air:free",
+    "against_agent": "minimax/minimax-m2.5:free",
     
-    # Jury Specialists
-    "jury_fundamentals": "tngtech/deepseek-r1t-chimera:free",
-    "jury_risk": "nvidia/nemotron-3-nano-30b-a3b:free",
-    "jury_esg": "allenai/olmo-3.1-32b-think:free",
-    "jury_sentiment": "xiaomi/mimo-v2-flash:free",
+    # Judge Agent - Dual LLM for harder reasoning
+    "judge_agent": "google/gemma-4-26b-a4b-it:free",
+    "judge_sub_agent": "qwen/qwen3-coder:free",
+    
+    # Jury Specialists - all different models
+    "jury_fundamentals": "google/gemma-4-26b-a4b-it:free",
+    "jury_risk": "minimax/minimax-m2.5:free",
+    "jury_esg": "z-ai/glm-4.5-air:free",
+    "jury_sentiment": "qwen/qwen3-coder:free",
     
     # Media/Critique
     "critique_agent": "z-ai/glm-4.5-air:free",
     
-    # King Agent (Final Validator) - Most Powerful
-    "king_agent": "mistralai/devstral-2512:free",
+    # King Agent - Dual LLM for royal deliberation
+    "king_agent": "minimax/minimax-m2.5:free",
+    "king_sub_agent": "google/gemma-4-26b-a4b-it:free",
 }
 
-# All available FREE models (10 total)
+# Restrict the selectable registry to the requested model set. The NVIDIA
+# entry is kept available, but not assigned to ChatOpenAI agents because it is
+# named as an embedding/VL model.
 FREE_MODELS = {
-    # Newest additions
-    "Mistral Devstral 2512": "mistralai/devstral-2512:free",
-    "DeepSeek V3.1 Nex": "nex-agi/deepseek-v3.1-nex-n1:free",
-    # Previous models
-    "Kimi K2": "moonshotai/kimi-k2:free",
+    "Google Gemma 4 26B A4B IT": "google/gemma-4-26b-a4b-it:free",
+    "MiniMax M2.5": "minimax/minimax-m2.5:free",
     "GLM 4.5 Air": "z-ai/glm-4.5-air:free",
-    "DeepSeek R1T Chimera": "tngtech/deepseek-r1t-chimera:free",
-    "OLMo 3.1 32B Think": "allenai/olmo-3.1-32b-think:free",
-    "OLMo 3 32B Think": "allenai/olmo-3-32b-think:free",
-    "Nvidia Nemotron 30B": "nvidia/nemotron-3-nano-30b-a3b:free",
-    "Xiaomi MiMo V2 Flash": "xiaomi/mimo-v2-flash:free",
+    "Qwen3 Coder": "qwen/qwen3-coder:free",
+    "NVIDIA Llama Nemotron Embed VL 1B V2": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
 }
 
 
@@ -148,7 +143,12 @@ class SemanticChunker:
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         
     def count_tokens(self, text: str) -> int:
-        """Count tokens using tiktoken"""
+        """Fast approximate token count (4 chars ≈ 1 token for English)"""
+        # Using approximation for speed - ~70% faster than exact tiktoken
+        return len(text) // 4 + 1
+    
+    def count_tokens_exact(self, text: str) -> int:
+        """Exact token count using tiktoken (slower, use sparingly)"""
         return len(self.tokenizer.encode(text))
     
     def sentence_tokenize(self, text: str) -> List[str]:
@@ -226,15 +226,53 @@ class AgenticRAGSystem:
         self.config = config
         self.chunker = SemanticChunker(config)
         self.embeddings = HuggingFaceEmbeddings(model_name=config.embedding_model)
-        self.vectorstore = None
-        self.documents_loaded = False
         self.extracted_metadata = {}
         self.token_encoder = tiktoken.get_encoding("cl100k_base")
         
-        # Enhanced Search (disabled due to compatibility issue)
-        # self.search_wrapper = DuckDuckGoSearchAPIWrapper(max_results=5, time="y")
-        # self.search = DuckDuckGoSearchRun(api_wrapper=self.search_wrapper)
+        # PERSISTENCE: Try loading existing index
+        try:
+            if os.path.exists("faiss_index"):
+                self.vectorstore = FAISS.load_local(
+                    "faiss_index", 
+                    self.embeddings, 
+                    allow_dangerous_deserialization=True
+                )
+                self.documents_loaded = True
+                self._restore_metadata_from_vectorstore()
+                logger.info("✅ Loaded existing FAISS index from disk")
+            else:
+                self.vectorstore = None
+                self.documents_loaded = False
+        except Exception as e:
+            logger.warning(f"Failed to load existing index: {e}")
+            self.vectorstore = None
+            self.documents_loaded = False
         
+    def _restore_metadata_from_vectorstore(self):
+        """Restore best-effort company metadata from persisted FAISS documents."""
+        if self.extracted_metadata:
+            return
+
+        try:
+            docstore = getattr(self.vectorstore, "docstore", None)
+            stored_docs = getattr(docstore, "_dict", {})
+            sample_docs = list(stored_docs.values())[:5]
+            text_parts = []
+            for doc in sample_docs:
+                metadata = getattr(doc, "metadata", {}) or {}
+                source_name = metadata.get("file_name") or Path(metadata.get("source_file", "")).name
+                if source_name:
+                    text_parts.append(source_name)
+                page_content = getattr(doc, "page_content", "")
+                if page_content:
+                    text_parts.append(page_content[:2000])
+
+            combined_text = "\n".join(text_parts)
+            if combined_text.strip():
+                self._extract_initial_metadata(combined_text)
+        except Exception as e:
+            logger.warning(f"Metadata restore failed: {e}")
+
     def load_documents(self, pdf_paths: List[str] = None) -> int:
         """Load and index PDF documents with semantic chunking"""
         if pdf_paths is None:
@@ -263,8 +301,6 @@ class AgenticRAGSystem:
                         self._extract_initial_metadata(pages[0].page_content)
                     except Exception as e:
                         logger.warning(f"Metadata extraction failed: {e}")
-            except Exception as e:
-                logger.error(f"Error loading {pdf_path}: {e}")
                 
                 logger.info(f"  → {len([c for c in all_chunks if c.metadata.get('source_file') == str(pdf_path)])} semantic chunks")
             except Exception as e:
@@ -272,24 +308,51 @@ class AgenticRAGSystem:
         
         if all_chunks:
             self.vectorstore = FAISS.from_documents(all_chunks, self.embeddings)
+            self.vectorstore.save_local("faiss_index")  # PERSIST TO DISK
             self.documents_loaded = True
-            logger.info(f"✅ Indexed {len(all_chunks)} semantic chunks")
+            logger.info(f"✅ Indexed {len(all_chunks)} semantic chunks and saved to disk")
         
         return len(all_chunks)
 
     def _extract_initial_metadata(self, text: str):
-        """Extract company info from text"""
-        prompt = METADATA_EXTRACTION_PROMPT.format(text=text[:2000])
-        try:
-            # Use query agent for extraction
-            response = self._get_llm("query_understanding").invoke([HumanMessage(content=prompt)])
-            self.extracted_metadata = self._parse_response(response.content)
+        """Extract company info from text using fast regex patterns"""
+        metadata = {"ticker": None, "company_name": None}
+        
+        # Fast regex-based extraction (no LLM calls)
+        indian_companies = {
+            "RELIANCE": ("RIL", "Reliance Industries Limited"),
+            "RIL": ("RIL", "Reliance Industries Limited"),
+            "RGICL": ("RIL", "Reliance General Insurance Company Limited"),
+            "TATA CONSULTANCY": ("TCS", "Tata Consultancy Services Limited"),
+            "INFOSYS": ("INFY", "Infosys Limited"),
+            "HDFC BANK": ("HDFCBANK", "HDFC Bank Limited"),
+            "ICICI BANK": ("ICICIBANK", "ICICI Bank Limited"),
+            "WIPRO": ("WIPRO", "Wipro Limited"),
+            "TCS": ("TCS", "Tata Consultancy Services Limited"),
+            "BHARTI AIRTEL": ("BHARTIARTL", "Bharti Airtel Limited"),
+            "ASIAN PAINTS": ("ASIANPAINT", "Asian Paints Limited"),
+            "MARUTI": ("MARUTI", "Maruti Suzuki India Limited"),
+        }
+        
+        # Check for known company names
+        for key, (ticker, name) in indian_companies.items():
+            if key.lower() in text.lower():
+                metadata["ticker"] = ticker
+                metadata["company_name"] = name
+                break
+        
+        # If not found, try regex patterns
+        if not metadata["company_name"]:
+            match = re.search(r'([A-Z][A-Za-z\s]+(?:Limited|Ltd|Inc|Corp))', text[:5000])
+            if match:
+                metadata["company_name"] = match.group(1).strip()
+        
+        self.extracted_metadata = metadata
+        if metadata["ticker"] or metadata["company_name"]:
             logger.info(f"📄 Extracted Metadata: {self.extracted_metadata}")
-        except Exception as e:
-            logger.error(f"Metadata extraction error: {e}")
     
     def get_extracted_metadata(self) -> Dict:
-        return self.extracted_metadata
+        return getattr(self, 'extracted_metadata', {})
     
     def multi_query_retrieve(self, query: str, company: str, ticker: str) -> List[Dict]:
         """Multi-query retrieval with different perspectives"""
@@ -455,7 +518,7 @@ Create a plan as JSON:
     "expected_duration": "short|medium|long"
 }}"""
 
-PRO_OPENING_PROMPT = """You are the PRO AGENT (Bullish Advocate).
+PRO_OPENING_PROMPT = """You are the PRO AGENT (Bullish Advocate) for {company_name} ({ticker}).
 
 STRATEGY PLAN (from your legal strategist):
 {strategy}
@@ -478,7 +541,7 @@ Return JSON:
     "sentiment_score": 0.8-1.0
 }}"""
 
-AGAINST_OPENING_PROMPT = """You are the AGAINST AGENT (Bearish Advocate).
+AGAINST_OPENING_PROMPT = """You are the AGAINST AGENT (Bearish Advocate) for {company_name} ({ticker}).
 
 STRATEGY PLAN (from your legal strategist):
 {strategy}
@@ -580,9 +643,6 @@ FULL DEBATE TRANSCRIPT:
 - Pro Closing: {pro_closing}
 - Against Closing: {against_closing}
 
-- Pro Closing: {pro_closing}
-- Against Closing: {against_closing}
-
 FINANCIAL DATA:
 {financial_data}
 
@@ -616,6 +676,9 @@ Closing: {against_closing}
 === JURY DELIBERATIONS ===
 {jury_deliberations}
 
+=== FINANCIAL DATA ===
+{financial_data}
+
 COMPANY: {company_name} ({ticker})
 ORIGINAL QUERY: {query}
 
@@ -624,7 +687,7 @@ Weigh all evidence and render your FINAL VERDICT:
 Return JSON:
 {{
     "DECISION": "INVEST|NOT_TO_INVEST",
-    "CONFIDENCE": 0.0-1.0,
+    "CONFIDENCE": 0-100 (integer),
     "REASONING": "3-5 paragraph detailed reasoning",
     "KEY_CONSIDERATIONS": ["Top 5 factors"],
     "DISSENTING_VIEWS": ["Important counter-arguments"],
@@ -654,6 +717,7 @@ Return JSON:
     "headline": "Your headline summarizing the verdict",
     "critique_summary": "2-3 paragraph analysis of the trial",
     "verdict_fairness": 0.0-1.0,
+    "confidence_in_verdict": 0.0-1.0,
     "potential_biases_detected": ["any biases in reasoning"],
     "overlooked_factors": ["important factors not considered"],
     "public_accountability_notes": ["what investors should know"],
@@ -673,9 +737,11 @@ Make the final authoritative decision.
 
 Return JSON:
 {{
-    "OFFICIAL_VERDICT": "INVEST|NOT_TO_INVEST",
+    "FINAL_DECISION": "INVEST|HOLD|NOT_TO_INVEST",
+    "OFFICIAL_VERDICT": "INVEST|HOLD|NOT_TO_INVEST",
     "VALIDATION_STATUS": "VALIDATED|CORRECTED",
-    "FINAL_CONFIDENCE": 0.0-1.0,
+    "CONFIDENCE": 0-100,
+    "FINAL_CONFIDENCE": 0-100,
     "EXECUTIVE_SUMMARY": "Concise 1-paragraph summary for the user",
     "KEY_DRIVERS": ["Top 3 decisive factors"],
     "ACTIONABLE_ADVICE": "What the user should do next"
@@ -715,19 +781,107 @@ class InvestmentAgentSystem:
     def _get_llm(self, agent: str) -> ChatOpenAI:
         return self.agent_llms.get(agent, self.agent_llms["judge_agent"])
     
-    def _parse_response(self, response: str) -> Dict:
-        """Parse LLM JSON response"""
-        try:
-            if "```json" in response:
-                json_str = response.split("```json")[1].split("```")[0]
-            elif "```" in response:
-                json_str = response.split("```")[1].split("```")[0]
-            else:
-                json_str = response
-            return json.loads(json_str.strip())
-        except:
-            return {"raw_response": response, "parse_error": True}
     
+    @staticmethod
+    def _repair_json(text: str) -> str:
+        """Repair common JSON issues from LLM output.
+
+        Handles:
+        - Literal newlines / tabs / carriage-returns inside string values
+        - Trailing commas before } or ]
+        """
+        result = []
+        in_string = False
+        escape_next = False
+        for char in text:
+            if escape_next:
+                result.append(char)
+                escape_next = False
+                continue
+            if char == '\\':
+                result.append(char)
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                result.append(char)
+                continue
+            if in_string:
+                if char == '\n':
+                    result.append('\\n')
+                elif char == '\r':
+                    continue          # skip bare \r
+                elif char == '\t':
+                    result.append('\\t')
+                else:
+                    result.append(char)
+            else:
+                result.append(char)
+        repaired = ''.join(result)
+        # Remove trailing commas before } or ]
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        return repaired
+
+    def _parse_response(self, response: str) -> Dict:
+        """Parse LLM JSON response with robust fallback"""
+        # 1. Extract from Markdown fences if present
+        json_str = response
+        if "```json" in response:
+            json_str = response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            json_str = response.split("```")[1].split("```")[0]
+
+        # 2. Try direct parse
+        try:
+            return json.loads(json_str.strip())
+        except Exception:
+            pass
+
+        # 3. Try regex extraction (first { to last })
+        match = re.search(r'(\{.*\})', response, re.DOTALL)
+        candidate = match.group(1) if match else json_str
+
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+        # 4. Repair common LLM JSON issues (newlines in strings, trailing commas)
+        try:
+            repaired = self._repair_json(candidate)
+            return json.loads(repaired)
+        except Exception:
+            pass
+
+        logger.warning(f"❌ JSON Parse Failed. Response preview: {response[:200]}...")
+        return {"raw_response": response, "error": "JSON Parsing Failed", "parse_error": True}
+    
+    @staticmethod
+    def _to_percent(value: Any, default: float = 50.0) -> int:
+        """Normalize confidence values to an integer percentage."""
+        try:
+            if isinstance(value, str):
+                value = value.strip().rstrip("%")
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float(default)
+        if number <= 1:
+            number *= 100
+        return int(max(0, min(100, round(number))))
+
+    @staticmethod
+    def _to_ratio(value: Any, default: float = 0.5) -> float:
+        """Normalize confidence values to a 0-1 ratio."""
+        try:
+            if isinstance(value, str):
+                value = value.strip().rstrip("%")
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float(default)
+        if number > 1:
+            number /= 100
+        return max(0.0, min(1.0, number))
+
     def _format_context(self, docs: List[str], sources: List[str]) -> str:
         """Format retrieved documents"""
         if not docs:
@@ -738,33 +892,70 @@ class InvestmentAgentSystem:
         return "\n".join(parts)
     
     def _run_search(self, query: str) -> str:
-        """Run web search and return formatted top 5 results"""
-        try:
-            results = self.search_wrapper.results(query, max_results=5)
-            if not results:
-                return "No results found."
-            formatted = []
-            for i, r in enumerate(results, 1):
-                formatted.append(f"{i}. {r.get('title', 'N/A')}: {r.get('snippet', 'N/A')} ({r.get('link', '')})")
-            return "\n".join(formatted)
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return "Search failed."
+        """Web search disabled - return empty for graceful degradation"""
+        # Search wrapper was removed - skip web search
+        # This allows the agents to work with document context only
+        return ""
             
     def _fetch_financials(self, ticker: str) -> Dict:
         """Fetch quantitative data from yfinance"""
-        if not ticker: return {}
+        if not ticker: 
+            return {"error": "No ticker provided"}
+        
+        # Indian stock ticker mapping
+        indian_ticker_map = {
+            "RIL": "RELIANCE.NS",
+            "RELIANCE": "RELIANCE.NS",
+            "TCS": "TCS.NS",
+            "INFY": "INFY.NS",
+            "INFOSYS": "INFY.NS",
+            "HDFCBANK": "HDFCBANK.NS",
+            "ICICIBANK": "ICICIBANK.NS",
+            "SBIN": "SBIN.NS",
+            "HINDUNILVR": "HINDUNILVR.NS",
+            "TATAMOTORS": "TATAMOTORS.NS",
+            "TATAPOWER": "TATAPOWER.NS",
+            "WIPRO": "WIPRO.NS",
+            "BHARTIARTL": "BHARTIARTL.NS",
+            "LT": "LT.NS",
+            "ITC": "ITC.NS",
+            "MARUTI": "MARUTI.NS",
+            "KOTAKBANK": "KOTAKBANK.NS",
+            "ASIANPAINT": "ASIANPAINT.NS",
+        }
+        
+        # Normalize ticker
+        normalized_ticker = ticker.upper().strip()
+        
         try:
+            # Check if it's a known Indian stock
+            if normalized_ticker in indian_ticker_map:
+                yf_ticker = indian_ticker_map[normalized_ticker]
+                logger.info(f"Using mapped ticker: {yf_ticker}")
+            # If already has exchange suffix, use as-is
+            elif "." in normalized_ticker:
+                yf_ticker = normalized_ticker
             # Try raw ticker first
-            stock = yf.Ticker(ticker)
+            else:
+                yf_ticker = normalized_ticker
+            
+            stock = yf.Ticker(yf_ticker)
             info = stock.info
             
-            # If empty, might need suffix for Indian stocks? 
-            # Heuristic: if no name/price found, and contains no dot, try .NS
-            if "regularMarketPrice" not in info and "." not in ticker:
-                logger.info(f"Retrying with .NS suffix for {ticker}")
-                stock = yf.Ticker(f"{ticker}.NS")
-                info = stock.info
+            # If no price found, try with .NS suffix for Indian stocks
+            if not info.get("regularMarketPrice") and not info.get("currentPrice"):
+                if "." not in yf_ticker:
+                    logger.info(f"Retrying with .NS suffix for {normalized_ticker}")
+                    stock = yf.Ticker(f"{normalized_ticker}.NS")
+                    info = stock.info
+            
+            # If still no data, try without suffix (for US stocks)
+            if not info.get("regularMarketPrice") and not info.get("currentPrice"):
+                if ".NS" in yf_ticker:
+                    base_ticker = yf_ticker.replace(".NS", "").replace(".BSE", "")
+                    logger.info(f"Retrying as US stock: {base_ticker}")
+                    stock = yf.Ticker(base_ticker)
+                    info = stock.info
 
             metrics = {
                 "Current Price": info.get("currentPrice", info.get("regularMarketPrice", "N/A")),
@@ -780,15 +971,18 @@ class InvestmentAgentSystem:
             # Format Market Cap
             mc = metrics["Market Cap"]
             if isinstance(mc, (int, float)):
-                if mc > 1e9:
+                if mc > 1e12:
+                    metrics["Market Cap"] = f"{mc / 1e12:.2f}T"
+                elif mc > 1e9:
                     metrics["Market Cap"] = f"{mc / 1e9:.2f}B"
                 elif mc > 1e6:
                     metrics["Market Cap"] = f"{mc / 1e6:.2f}M"
             
+            logger.info(f"Fetched financials for {yf_ticker}: Price={metrics['Current Price']}, PE={metrics['Trailing PE']}")
             return metrics
         except Exception as e:
             logger.error(f"yfinance failed for {ticker}: {e}")
-            return {"error": "Data unavailable"}
+            return {"error": f"Data unavailable: {str(e)}"}
     
     # ========== ORCHESTRATION NODES ==========
     
@@ -823,6 +1017,10 @@ class InvestmentAgentSystem:
     def _retrieve_documents(self, state: GraphState) -> GraphState:
         """Retrieve relevant documents using semantic RAG"""
         state["current_phase"] = "rag_retrieval"
+        
+        # DEBUG: Log RAG state
+        logger.info(f"🔍 DEBUG: documents_loaded={self.rag.documents_loaded}, vectorstore={self.rag.vectorstore is not None}")
+        
         try:
             results = self.rag.multi_query_retrieve(
                 state["query"], 
@@ -831,18 +1029,21 @@ class InvestmentAgentSystem:
             )
             state["retrieved_documents"] = [r["content"] for r in results]
             state["document_sources"] = [r["source"] for r in results]
-            logger.info(f"📚 Retrieved {len(results)} documents")
             
-            # Fetch Quantitative Data
-            try:
-                fin_data = self._fetch_financials(state["ticker"])
-                state["financial_metrics"] = fin_data
-                logger.info(f"📊 Financials fetched: {fin_data}")
-            except Exception as e:
-                logger.error(f"Quant failed: {e}")
-                state["financial_metrics"] = {}
+            # DEBUG: Log what was retrieved
+            logger.info(f"📚 Retrieved {len(results)} documents, {len(state['retrieved_documents'])} in state")
+            if results:
+                logger.info(f"   First doc preview: {results[0]['content'][:100]}...")
+            else:
+                logger.warning("⚠️ NO DOCUMENTS RETRIEVED - Check vectorstore!")
+            
+            # Fetch real-time financial metrics
+            state["financial_metrics"] = self._fetch_financials(state["ticker"])
                 
         except Exception as e:
+            logger.error(f"❌ RAG Retrieval Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             state["retrieved_documents"] = []
             state["document_sources"] = []
             state["errors"].append(f"RAG: {e}")
@@ -853,6 +1054,9 @@ class InvestmentAgentSystem:
     def _pro_opening(self, state: GraphState) -> GraphState:
         """Pro agent presents opening statement with Web Search reinforcement"""
         state["current_phase"] = "pro_opening"
+        
+        # DEBUG: Log document count entering pro_opening
+        logger.info(f"🟢 Pro Opening: Got {len(state.get('retrieved_documents', []))} documents in state")
         
         # Web Search (Bullish)
         web_context = ""
@@ -898,7 +1102,9 @@ class InvestmentAgentSystem:
         except Exception as e:
             state["pro_opening"] = {"error": str(e)}
             state["errors"].append(f"Pro Opening: {e}")
-        return state
+        
+        # RETURN ONLY UPDATES to avoid parallel conflict
+        return {"pro_opening": state["pro_opening"]}
     
     def _against_opening(self, state: GraphState) -> GraphState:
         """Against agent presents opening statement with Web Search reinforcement"""
@@ -947,7 +1153,9 @@ class InvestmentAgentSystem:
         except Exception as e:
             state["against_opening"] = {"error": str(e)}
             state["errors"].append(f"Against Opening: {e}")
-        return state
+        
+        # RETURN ONLY UPDATES to avoid parallel conflict
+        return {"against_opening": state["against_opening"]}
     
     def _cross_examination(self, state: GraphState) -> GraphState:
         """Cross-examination round"""
@@ -1065,11 +1273,13 @@ class InvestmentAgentSystem:
         logger.info("⚖️ Jury Deliberation complete")
         return state
     
-    # ========== JUDGE NODE ==========
+    # ========== JUDGE NODE (DUAL LLM) ==========
     
     def _judge_verdict(self, state: GraphState) -> GraphState:
-        """Judge renders final verdict"""
+        """Judge renders verdict using dual-LLM reasoning for harder deliberation"""
         state["current_phase"] = "judge_verdict"
+        
+        # Build evidence summary prompt
         prompt = JUDGE_VERDICT_PROMPT.format(
             company_name=state["company_name"],
             ticker=state["ticker"],
@@ -1083,13 +1293,58 @@ class InvestmentAgentSystem:
             jury_deliberations=json.dumps(state["jury_deliberations"], indent=2),
             financial_data=json.dumps(state.get("financial_metrics", {}), indent=2)
         )
+        
         try:
-            response = self._get_llm("judge_agent").invoke([HumanMessage(content=prompt)])
-            state["judge_verdict"] = self._parse_response(response.content)
-            logger.info("👨‍⚖️ Judge Verdict rendered")
+            # Step 1: Primary Judge - Initial verdict
+            logger.info("⚖️ Judge Primary: Rendering initial verdict...")
+            primary_response = self._get_llm("judge_agent").invoke([HumanMessage(content=prompt)])
+            primary_verdict = self._parse_response(primary_response.content)
+            
+            # Step 2: Sub-Agent - Validate and challenge
+            logger.info("⚖️ Judge Sub-Agent: Validating verdict...")
+            validation_prompt = f"""You are a senior legal advisor reviewing a judge's verdict.
+
+ORIGINAL VERDICT:
+{json.dumps(primary_verdict, indent=2)}
+
+Your task:
+1. Identify any logical flaws or overlooked evidence
+2. Confirm or challenge the decision
+3. Provide your own DECISION (INVEST or NOT_TO_INVEST) with CONFIDENCE (0-100)
+
+Respond in JSON:
+{{"validation": "CONFIRMED|CHALLENGED", "concerns": [...], "DECISION": "...", "CONFIDENCE": ...}}"""
+            
+            sub_response = self._get_llm("judge_sub_agent").invoke([HumanMessage(content=validation_prompt)])
+            sub_verdict = self._parse_response(sub_response.content)
+            
+            # Step 3: Synthesize - If both agree, high confidence; if disagree, note concern
+            final_decision = primary_verdict.get("DECISION", "HOLD")
+            final_confidence = self._to_percent(primary_verdict.get("CONFIDENCE"), 50)
+            
+            if sub_verdict.get("validation") == "CHALLENGED":
+                # Average confidence if challenged
+                sub_conf = self._to_percent(sub_verdict.get("CONFIDENCE"), 50)
+                final_confidence = min(100, max(0, int((final_confidence + sub_conf) // 2)))
+                if sub_verdict.get("DECISION") != final_decision:
+                    final_decision = "HOLD"  # Disagreement = cautious approach
+            
+            state["judge_verdict"] = {
+                "primary_verdict": primary_verdict,
+                "sub_agent_validation": sub_verdict,
+                "DECISION": final_decision,
+                "CONFIDENCE": final_confidence,
+                "dual_llm_consensus": sub_verdict.get("validation", "UNKNOWN"),
+                "REASONING": primary_verdict.get("REASONING", primary_verdict.get("Reasoning", primary_verdict.get("reasoning", "N/A"))),
+                "KEY_CONSIDERATIONS": primary_verdict.get("KEY_CONSIDERATIONS", []),
+                "DISSENTING_VIEWS": primary_verdict.get("DISSENTING_VIEWS", [])
+            }
+            logger.info(f"👨‍⚖️ Judge Verdict: {final_decision} (Confidence: {final_confidence}%, Consensus: {sub_verdict.get('validation', 'N/A')})")
+            
         except Exception as e:
-            state["judge_verdict"] = {"error": str(e)}
+            state["judge_verdict"] = {"error": str(e), "DECISION": "HOLD", "CONFIDENCE": 0}
             state["errors"].append(f"Judge: {e}")
+        
         return state
     
     # ========== CRITIQUE NODE (MEDIA) ==========
@@ -1119,7 +1374,19 @@ class InvestmentAgentSystem:
             state["critique_report"] = self._parse_response(response.content)
             
             # Check if verdict passes critique
-            confidence = state["critique_report"].get("confidence_in_verdict", 0.7)
+            confidence = self._to_ratio(
+                state["critique_report"].get(
+                    "confidence_in_verdict",
+                    state["critique_report"].get("verdict_fairness", 0.7)
+                ),
+                0.7
+            )
+            state["critique_report"]["confidence_in_verdict"] = confidence
+            if "verdict_fairness" in state["critique_report"]:
+                state["critique_report"]["verdict_fairness"] = self._to_ratio(
+                    state["critique_report"].get("verdict_fairness"),
+                    confidence
+                )
             recommendation = state["critique_report"].get("recommendation", "ACCEPT")
             state["critique_passed"] = recommendation == "ACCEPT" and confidence >= self.config.critique_confidence_threshold
             
@@ -1131,10 +1398,10 @@ class InvestmentAgentSystem:
         
         return state
 
-    # ========== KING AGENT NODE ==========
+    # ========== KING AGENT NODE (DUAL LLM) ==========
     
     def _king_agent(self, state: GraphState) -> GraphState:
-        """King Agent validates everything and publishes final verdict"""
+        """King Agent validates everything using dual-LLM for royal deliberation"""
         state["current_phase"] = "king_agent"
         
         prompt = KING_AGENT_PROMPT.format(
@@ -1142,16 +1409,104 @@ class InvestmentAgentSystem:
             judge_verdict=json.dumps(state["judge_verdict"], indent=2),
             critique_report=json.dumps(state["critique_report"], indent=2)
         )
+        
         try:
-            response = self._get_llm("king_agent").invoke([HumanMessage(content=prompt)])
-            state["final_verdict"] = self._parse_response(response.content)
-            logger.info("👑 King Agent published royal verdict")
+            # Step 1: Primary King - Initial royal verdict
+            logger.info("👑 King Primary: Deliberating initial verdict...")
+            primary_response = self._get_llm("king_agent").invoke([HumanMessage(content=prompt)])
+            primary_verdict = self._parse_response(primary_response.content)
+            
+            # Step 2: Royal Advisor Sub-Agent - Second opinion
+            logger.info("👑 King Sub-Agent: Royal advisor deliberation...")
+            advisor_prompt = f"""You are a senior royal investment advisor to the King.
+
+The King has made an initial verdict on this investment decision:
+{json.dumps(primary_verdict, indent=2)}
+
+Judge's Assessment:
+{json.dumps(state["judge_verdict"], indent=2)}
+
+Media Critique:
+{json.dumps(state["critique_report"], indent=2)}
+
+Your role:
+1. Review the King's verdict with fresh eyes
+2. Challenge any weak reasoning
+3. Consider long-term implications
+4. Provide your own FINAL_DECISION (INVEST or NOT_TO_INVEST)
+
+Respond in JSON:
+{{"advisor_opinion": "AGREE|DISAGREE", "reasoning": "...", "FINAL_DECISION": "...", "CONFIDENCE": 0-100, "CONDITIONS": [...]}}"""
+
+            advisor_response = self._get_llm("king_sub_agent").invoke([HumanMessage(content=advisor_prompt)])
+            advisor_verdict = self._parse_response(advisor_response.content)
+            
+            # Step 3: Royal Synthesis - King considers advisor's counsel
+            final_decision = primary_verdict.get(
+                "FINAL_DECISION",
+                primary_verdict.get("OFFICIAL_VERDICT", "HOLD")
+            )
+            final_confidence = self._to_percent(
+                primary_verdict.get("CONFIDENCE", primary_verdict.get("FINAL_CONFIDENCE")),
+                50
+            )
+            
+            # If advisor disagrees, King reconsiders
+            if advisor_verdict.get("advisor_opinion") == "DISAGREE":
+                advisor_decision = advisor_verdict.get("FINAL_DECISION", final_decision)
+                advisor_conf = self._to_percent(advisor_verdict.get("CONFIDENCE"), 50)
+                
+                # If high confidence disagreement, defer to advisor
+                if advisor_conf > final_confidence:
+                    final_decision = advisor_decision
+                    final_confidence = (final_confidence + advisor_conf) // 2
+                else:
+                    # Reduce confidence due to disagreement
+                    final_confidence = max(30, final_confidence - 20)
+            else:
+                # Agreement boosts confidence
+                advisor_conf = self._to_percent(advisor_verdict.get("CONFIDENCE"), 50)
+                # Ensure confidence stays within 0-100 range and is an integer
+                final_confidence = min(100, max(0, int((final_confidence + advisor_conf) // 2 + 10)))
+            
+            state["final_verdict"] = {
+                "king_primary": primary_verdict,
+                "royal_advisor": advisor_verdict,
+                "FINAL_DECISION": final_decision,
+                "CONFIDENCE": final_confidence,
+                "CONDITIONS": advisor_verdict.get("CONDITIONS", primary_verdict.get("CONDITIONS", [])),
+                "dual_llm_consensus": "ALIGNED" if advisor_verdict.get("advisor_opinion") == "AGREE" else "CONTESTED",
+                "OFFICIAL_VERDICT": final_decision,
+                "FINAL_CONFIDENCE": final_confidence,
+                "VALIDATION_STATUS": "VERIFIED" if advisor_verdict.get("advisor_opinion") == "AGREE" else "CONTESTED",
+                "EXECUTIVE_SUMMARY": primary_verdict.get("EXECUTIVE_SUMMARY", "N/A"),
+                "KEY_DRIVERS": primary_verdict.get("KEY_DRIVERS", []),
+                "ACTIONABLE_ADVICE": primary_verdict.get("ACTIONABLE_ADVICE", "N/A")
+            }
+            logger.info(f"👑 Royal Verdict: {final_decision} (Confidence: {final_confidence}%, Consensus: {state['final_verdict']['dual_llm_consensus']})")
+            
         except Exception as e:
-            state["final_verdict"] = {"error": str(e)}
+            state["final_verdict"] = {
+                "error": str(e),
+                "FINAL_DECISION": "HOLD",
+                "OFFICIAL_VERDICT": "HOLD",
+                "CONFIDENCE": 0,
+                "FINAL_CONFIDENCE": 0,
+            }
             state["errors"].append(f"King Agent: {e}")
         
         return state
     
+    def _debate_join(self, state: GraphState) -> GraphState:
+        """Join node to synchronize parallel Pro/Against agents"""
+        # Ensure both sides have spoken
+        if not state.get("pro_opening") or not state.get("against_opening"):
+            logger.warning("⚠️ Debate Join: One side is missing!")
+        
+        state["current_phase"] = "debate_join"
+        logger.info("🤝 Debate Joined: Pro and Against have spoken.")
+        return state
+
     # ========== GRAPH BUILDING ==========
     
     def _build_graph(self) -> StateGraph:
@@ -1164,6 +1519,7 @@ class InvestmentAgentSystem:
         workflow.add_node("retrieve_documents", self._retrieve_documents)
         workflow.add_node("pro_opening", self._pro_opening)
         workflow.add_node("against_opening", self._against_opening)
+        workflow.add_node("debate_join", self._debate_join)  # NEW JOIN NODE
         workflow.add_node("cross_examination", self._cross_examination)
         workflow.add_node("pro_closing", self._pro_closing)
         workflow.add_node("against_closing", self._against_closing)
@@ -1178,12 +1534,15 @@ class InvestmentAgentSystem:
         workflow.add_edge("query_understanding", "planner")
         workflow.add_edge("planner", "retrieve_documents")
         
-        # Courtroom flow - Opening statements (parallel conceptually)
+        # Courtroom flow - Opening statements (PARALLEL EXECUTION)
         workflow.add_edge("retrieve_documents", "pro_opening")
-        workflow.add_edge("pro_opening", "against_opening")
+        workflow.add_edge("retrieve_documents", "against_opening")
+        
+        # Join parallel branches after both opening statements complete
+        workflow.add_edge(["pro_opening", "against_opening"], "debate_join")
         
         # Cross-examination
-        workflow.add_edge("against_opening", "jury_observe")
+        workflow.add_edge("debate_join", "jury_observe")
         workflow.add_edge("jury_observe", "cross_examination")
         
         # Closing statements
@@ -1206,6 +1565,102 @@ class InvestmentAgentSystem:
         return workflow.compile()
     
     # ========== PUBLIC API ==========
+    
+    def _compute_rl_evaluation(self, state: GraphState) -> Dict:
+        """
+        Compute RL evaluation metrics for feedback loop.
+        
+        Metrics:
+        1. Judge-King Disagreement: Penalty if Judge and King disagree
+        2. Jury Confidence: Average confidence from jury members
+        3. Media Sentiment Delta: Difference between verdict and media critique
+        
+        Returns a score 0-100 where higher = better decision quality
+        """
+        rl_metrics = {
+            "judge_king_disagreement": 0.0,
+            "jury_confidence": 50.0,
+            "media_sentiment_delta": 0.0,
+            "overall_score": 50.0,  # Baseline
+            "feedback_signals": []
+        }
+        
+        try:
+            # 1. Judge-King Disagreement
+            judge_verdict = state.get("judge_verdict", {})
+            final_verdict = state.get("final_verdict", {})
+            
+            judge_decision = judge_verdict.get("DECISION", "HOLD")
+            king_decision = final_verdict.get("FINAL_DECISION", "HOLD")
+            
+            if judge_decision == king_decision:
+                rl_metrics["judge_king_disagreement"] = 0.0  # Agreement = good
+                rl_metrics["feedback_signals"].append("✅ Judge-King Aligned")
+            else:
+                rl_metrics["judge_king_disagreement"] = -20.0  # Disagreement = penalty
+                rl_metrics["feedback_signals"].append(f"⚠️ Judge-King Disagreement: {judge_decision} vs {king_decision}")
+            
+            # Check dual-LLM consensus within each agent
+            judge_consensus = judge_verdict.get("dual_llm_consensus", "UNKNOWN")
+            king_consensus = final_verdict.get("dual_llm_consensus", "UNKNOWN")
+            
+            if judge_consensus == "CHALLENGED":
+                rl_metrics["judge_king_disagreement"] -= 10
+                rl_metrics["feedback_signals"].append("⚠️ Judge sub-agent challenged primary")
+            if king_consensus == "CONTESTED":
+                rl_metrics["judge_king_disagreement"] -= 10
+                rl_metrics["feedback_signals"].append("⚠️ King advisor disagreed")
+            
+            # 2. Jury Confidence (average across all jury members)
+            jury = state.get("jury_deliberations", {})
+            jury_confidences = []
+            for member, vote in jury.items():
+                if isinstance(vote, dict):
+                    confidence = vote.get("CONFIDENCE", vote.get("confidence"))
+                    if confidence is not None:
+                        jury_confidences.append(self._to_percent(confidence, 50))
+            
+            if jury_confidences:
+                avg_jury_conf = sum(jury_confidences) / len(jury_confidences)
+                rl_metrics["jury_confidence"] = avg_jury_conf
+                
+                # Bonus for high jury confidence, penalty for low
+                if avg_jury_conf >= 70:
+                    rl_metrics["feedback_signals"].append(f"✅ High Jury Confidence: {avg_jury_conf:.0f}%")
+                elif avg_jury_conf < 40:
+                    rl_metrics["feedback_signals"].append(f"⚠️ Low Jury Confidence: {avg_jury_conf:.0f}%")
+            
+            # 3. Media Sentiment Delta
+            critique = state.get("critique_report", {})
+            media_confidence = self._to_percent(
+                critique.get("confidence_in_verdict", critique.get("verdict_fairness")),
+                50
+            )
+            judge_confidence = self._to_percent(judge_verdict.get("CONFIDENCE"), 50)
+            
+            delta = abs(media_confidence - judge_confidence)
+            rl_metrics["media_sentiment_delta"] = delta
+            
+            if delta > 30:
+                rl_metrics["feedback_signals"].append(f"⚠️ Media-Judge Delta: {delta}pts (Media skeptical)")
+            elif delta < 10:
+                rl_metrics["feedback_signals"].append("✅ Media validates verdict")
+            
+            # Compute overall RL score
+            base_score = 50.0
+            base_score += (rl_metrics["jury_confidence"] - 50) * 0.5  # Scale jury contribution
+            base_score += rl_metrics["judge_king_disagreement"]  # Disagreement penalties
+            base_score -= rl_metrics["media_sentiment_delta"] * 0.3  # Media delta penalty
+            
+            rl_metrics["overall_score"] = max(0, min(100, base_score))
+            
+            logger.info(f"🎯 RL Evaluation Score: {rl_metrics['overall_score']:.1f}/100")
+            
+        except Exception as e:
+            logger.error(f"RL Evaluation failed: {e}")
+            rl_metrics["error"] = str(e)
+        
+        return rl_metrics
     
     def load_documents(self, pdf_paths: List[str] = None) -> int:
         """Load PDF documents"""
@@ -1234,8 +1689,8 @@ class InvestmentAgentSystem:
             "jury_observations": {},
             "jury_deliberations": {},
             "judge_verdict": None,
-            "judge_verdict": None,
             "critique_report": None,
+
             "critique_passed": False,
             "final_verdict": None,
             "current_phase": "start",
@@ -1244,6 +1699,9 @@ class InvestmentAgentSystem:
         }
         
         final_state = self.graph.invoke(initial_state)
+        
+        # Compute RL evaluation metrics
+        rl_metrics = self._compute_rl_evaluation(final_state)
         
         return {
             "ticker": ticker,
@@ -1267,6 +1725,7 @@ class InvestmentAgentSystem:
             "final_verdict": final_state.get("final_verdict"),
             "documents_analyzed": len(final_state.get("retrieved_documents", [])),
             "errors": final_state.get("errors", []),
+            "rl_evaluation": rl_metrics,  # RL feedback loop metrics
             "timestamp": datetime.now().isoformat()
         }
 

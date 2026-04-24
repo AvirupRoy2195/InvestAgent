@@ -100,7 +100,7 @@ def save_uploaded_files(uploaded_files):
     """Save uploaded files to temp directory"""
     saved_paths = []
     for uploaded_file in uploaded_files:
-        file_path = Path(st.session_state.temp_dir) / uploaded_file.name
+        file_path = Path(st.session_state.temp_dir) / Path(uploaded_file.name).name
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         saved_paths.append(str(file_path))
@@ -110,8 +110,11 @@ def save_uploaded_files(uploaded_files):
 @st.cache_resource
 def get_system_engine():
     from agentic_rag_system import InvestmentAgentSystem, Config
-    api_key = "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"
-    os.environ["OPENROUTER_API_KEY"] = api_key
+    from dotenv import load_dotenv
+    load_dotenv()  # Load from .env
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY not found in .env file")
     config = Config(openrouter_api_key=api_key)
     return InvestmentAgentSystem(config)
 
@@ -126,6 +129,19 @@ def render_decision_badge(decision: str):
         st.markdown(f'<div class="decision-hold">🟡 {decision}</div>', unsafe_allow_html=True)
 
 
+def format_percent(value, default: str = "N/A") -> str:
+    """Format confidence/score values that may be 0-1 or 0-100."""
+    try:
+        if isinstance(value, str):
+            value = value.strip().rstrip("%")
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number <= 1:
+        number *= 100
+    return f"{number:.0f}%"
+
+
 # ============================================================================
 # SIDEBAR
 # ============================================================================
@@ -134,14 +150,33 @@ with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     
     # Auto-initialize
+    init_error = None
     try:
-        st.session_state.system = get_system_engine()
+        if st.session_state.system is None:
+            st.session_state.system = get_system_engine()
+            # Synchronize state if index was loaded from disk
+            if st.session_state.system.rag.documents_loaded:
+                st.session_state.documents_loaded = True
     except Exception as e:
+        init_error = e
         st.error(f"Initialization Error: {e}")
+        st.caption("Set OPENROUTER_API_KEY in .env, then restart or rerun the app.")
+    
+    system_ready = st.session_state.system is not None
     
     st.divider()
     
-    st.markdown("### 📄 Step 1: Upload Documents")
+    # DEBUG SECTION
+    with st.expander("🛠️ Debug Info"):
+        if system_ready:
+            st.write(f"Docs Loaded: **{st.session_state.system.rag.documents_loaded}**")
+            st.write(f"Vectorstore: **{'✅ Ready' if st.session_state.system.rag.vectorstore else '❌ None'}**")
+            if st.session_state.system.rag.vectorstore:
+                 st.write(f"Index size: {st.session_state.system.rag.vectorstore.index.ntotal}")
+        else:
+            st.write("System not initialized")
+            
+    st.markdown("### 📄 Upload Documents")
     uploaded_files = st.file_uploader(
         "Choose PDF files",
         type=["pdf"],
@@ -149,9 +184,14 @@ with st.sidebar:
     )
     
     if uploaded_files:
+        if not system_ready:
+            st.warning("Backend is not initialized, so documents cannot be loaded yet.")
         st.success(f"✅ {len(uploaded_files)} file(s) selected")
     
     if st.button("📥 Load Documents", type="primary", disabled=not uploaded_files):
+        if not system_ready:
+            st.error("Backend is not initialized. Set OPENROUTER_API_KEY in .env first.")
+            st.stop()
         with st.spinner("Processing documents with semantic chunking..."):
                 saved_paths = save_uploaded_files(uploaded_files)
                 st.session_state.uploaded_files = saved_paths
@@ -169,10 +209,13 @@ with st.sidebar:
                     st.toast(f"✅ Detected: {meta.get('company_name')} ({meta.get('ticker')})")
                 
                 st.success(f"✅ Loaded {chunk_count} semantic chunks!")
+                st.rerun()  # Refresh to show auto-filled values
     
     st.divider()
     st.markdown("### 📊 System")
-    if st.session_state.documents_loaded:
+    if not system_ready:
+        st.error("Backend not initialized")
+    elif st.session_state.documents_loaded:
         st.success("✅ Ready for analysis")
     else:
         st.warning("⚠️ Upload documents first")
@@ -188,29 +231,28 @@ st.markdown('<p style="color:#666;font-size:1.1rem;">12-Agent System • Semanti
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Analysis", "⚖️ Courtroom", "📰 Critique", "ℹ️ About"])
 
 with tab1:
-    st.markdown("## 🔍 Step 2: Run Analysis")
+    st.markdown("## 🔍 Run Analysis")
     
-    # Always show input section
-    # Initialize session state for inputs if not needed
-    if "input_ticker" not in st.session_state:
-        st.session_state.input_ticker = ""
-    if "input_company" not in st.session_state:
-        st.session_state.input_company = ""
+    system_ready = st.session_state.system is not None
+    run_disabled = not system_ready or not st.session_state.documents_loaded
 
-    # Always show input section
-    col1, col2 = st.columns(2)
-    with col1:
-        ticker = st.text_input("Stock Ticker", key="input_ticker", placeholder="e.g. AAPL")
-    with col2:
-        company_name = st.text_input("Company Name", key="input_company", placeholder="e.g. Apple Inc.")
-    
-    query = st.text_area(
-        "Investment Query",
-        height=100,
-        placeholder="Enter your investment question here (e.g. Should I invest in this company? Analyze risks)..."
-    )
-    
-    if not st.session_state.documents_loaded:
+    with st.form("analysis_query_form", clear_on_submit=False):
+        # Query input only - ticker/company auto-extracted from documents
+        query = st.text_input(
+            "Investment Query",
+            key="investment_query",
+            placeholder="Should I invest in this company? Analyze risks..."
+        )
+        run_analysis = st.form_submit_button(
+            "Run Courtroom Analysis",
+            type="primary",
+            use_container_width=True,
+            disabled=run_disabled
+        )
+
+    if not system_ready:
+        st.error("Backend is not initialized. Fix OPENROUTER_API_KEY in .env before loading documents or running analysis.")
+    elif not st.session_state.documents_loaded:
         st.info("👆 Enter your query above, but you must **Upload PDF Documents** in the sidebar to run the analysis.")
         
         st.markdown("### 🏛️ Process Flow")
@@ -230,13 +272,21 @@ with tab1:
             <div style="flex: 1; min-width: 80px; font-weight: bold; color: #4fd1c5;">👑<br>King</div>
         </div>
         """, unsafe_allow_html=True)
+    else:
+        # Show detected company info
+        meta = st.session_state.system.rag.get_extracted_metadata()
+        if meta.get("company_name") or meta.get("ticker"):
+            st.success(f"📄 Detected: **{meta.get('company_name', 'Unknown Company')}** ({meta.get('ticker', 'N/A')})")
             
-    # Run button
-    run_disabled = not st.session_state.documents_loaded
-    if st.button("⚖️ Run Courtroom Analysis", type="primary", use_container_width=True, disabled=run_disabled):
-            if not ticker or not company_name:
-                st.error("Please enter ticker and company name")
-            else:
+    if run_analysis:
+        # Get ticker/company from extracted metadata
+        meta = st.session_state.system.rag.get_extracted_metadata()
+        ticker = meta.get("ticker", "UNKNOWN")
+        company_name = meta.get("company_name", "Unknown Company")
+        
+        if not query.strip():
+            st.error("Please enter an investment query")
+        else:
                 try:
                     progress = st.progress(0)
                     with st.status("🚀 Orchestrating 12 Agents...", expanded=True) as status:
@@ -272,8 +322,7 @@ with tab1:
                         st.caption(f"Status: {final.get('VALIDATION_STATUS', 'PENDING')}")
                         
                         conf = final.get("FINAL_CONFIDENCE", 0)
-                        if isinstance(conf, (int, float)):
-                            st.metric("Confidence", f"{conf:.0%}")
+                        st.metric("Confidence", format_percent(conf))
                         
                 except Exception as e:
                     st.error(f"❌ Analysis failed: {e}")
@@ -305,6 +354,12 @@ with tab2:
         with st.expander("📖 Opening Statement", expanded=True):
             opening = pro_case.get("opening", {})
             if opening:
+                if opening.get("error"):
+                    st.error(f"❌ Error: {opening.get('error')}")
+                    if opening.get("raw_response"):
+                        with st.expander("Raw Response"):
+                            st.code(opening.get("raw_response"))
+                
                 st.markdown(f'<div class="phase-card pro-card">', unsafe_allow_html=True)
                 st.write(opening.get("opening_statement", opening.get("raw_response", "N/A")))
                 if opening.get("key_bullish_points"):
@@ -334,6 +389,12 @@ with tab2:
         with st.expander("📖 Opening Statement", expanded=True):
             opening = against_case.get("opening", {})
             if opening:
+                if opening.get("error"):
+                    st.error(f"❌ Error: {opening.get('error')}")
+                    if opening.get("raw_response"):
+                        with st.expander("Raw Response"):
+                            st.code(opening.get("raw_response"))
+
                 st.markdown(f'<div class="phase-card against-card">', unsafe_allow_html=True)
                 st.write(opening.get("opening_statement", opening.get("raw_response", "N/A")))
                 if opening.get("key_bearish_points"):
@@ -365,22 +426,28 @@ with tab2:
             for col, (spec, emoji) in zip(cols, specialists):
                 with col:
                     v = jury.get(spec.lower(), {})
-                    score = v.get(f"{spec.lower()}_score", v.get("score", "N/A"))
+                    raw_score = v.get(f"{spec.lower()}_score", v.get("score", 0))
+                    score_pct = format_percent(raw_score)
                     verdict = v.get("verdict", "N/A")
-                    st.metric(f"{emoji} {spec}", f"{verdict}", f"Score: {score}")
+                    st.metric(f"{emoji} {spec}", f"{verdict}", f"Score: {score_pct}")
         
         st.divider()
         
         # JUDGE
         st.markdown("### 👨‍⚖️ Judge Verdict (Initial)")
-        decision = result.get("decision", {})
+        decision = result.get("decision") or {}
         if decision and not decision.get("error"):
             st.markdown(f'<div class="phase-card judge-card">', unsafe_allow_html=True)
             render_decision_badge(decision.get("DECISION", "HOLD"))
-            st.markdown(f"**Confidence:** {decision.get('CONFIDENCE', 'N/A')}")
+            st.markdown(f"**Confidence:** {format_percent(decision.get('CONFIDENCE'))}")
             st.markdown("**Reasoning:**")
-            st.write(decision.get("REASONING", "N/A"))
+            reasoning = decision.get("REASONING", decision.get("Reasoning", decision.get("reasoning", "N/A")))
+            st.write(reasoning)
             st.markdown('</div>', unsafe_allow_html=True)
+            with st.expander("🔍 Debug: Raw Judge Data"):
+                st.json(decision)
+        else:
+            st.warning(f"Judge verdict unavailable. Error: {decision.get('error', 'No data returned')}")
             
         st.divider()
         
@@ -391,7 +458,7 @@ with tab2:
             st.markdown(f'<div class="phase-card" style="border-left: 4px solid gold; background: #fffbe6;">', unsafe_allow_html=True)
             render_decision_badge(final.get("OFFICIAL_VERDICT", "HOLD"))
             st.markdown(f"**Validation Status:** {final.get('VALIDATION_STATUS', 'N/A')}")
-            st.markdown(f"**Confidence:** {final.get('FINAL_CONFIDENCE', 'N/A')}")
+            st.markdown(f"**Confidence:** {format_percent(final.get('FINAL_CONFIDENCE'))}")
             
             st.markdown("#### Executive Summary")
             st.write(final.get("EXECUTIVE_SUMMARY", "N/A"))
@@ -422,8 +489,8 @@ with tab3:
             st.markdown(f"### 📰 {critique.get('headline', 'Investment Analysis Report')}")
             
             cols = st.columns(3)
-            cols[0].metric("Verdict Fairness", f"{critique.get('verdict_fairness', 0):.0%}")
-            cols[1].metric("Confidence", f"{critique.get('confidence_in_verdict', 0):.0%}")
+            cols[0].metric("Verdict Fairness", format_percent(critique.get('verdict_fairness', 0)))
+            cols[1].metric("Confidence", format_percent(critique.get('confidence_in_verdict', 0)))
             cols[2].metric("Recommendation", critique.get("recommendation", "N/A"))
             
             st.markdown("### Critique Summary")
